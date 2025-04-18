@@ -29,9 +29,40 @@ class IEL:
             G[self.N - 1] = G[self.N - 2] - G_s - G_p - G_init
         return jnp.array(G)
 
+    def metropolis(self, params):
+        dG = self.energy(params)
+        RT = 1.6898  # Using the RT constant defined in your code
 
-    def metropolis(self):
-        return
+        # For unimolecular transitions (Metropolis scheme)
+        # Forward rates: constant for downhill energy changes, scaled by Boltzmann factor for uphill
+        k_plus = params.k_uni * jnp.ones(self.N - 1)
+        k_minus = params.k_uni * jnp.ones(self.N - 1)
+
+        # Apply Metropolis rule: if energy increases, scale rate by Boltzmann factor
+        energy_diff = dG[1:] - dG[:-1]
+        uphill_forward = energy_diff > 0
+        uphill_backward = energy_diff < 0
+
+        k_plus = k_plus.at[uphill_forward].mul(jnp.exp(-energy_diff[uphill_forward] / RT))
+        k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward] / RT))
+
+        # Handle bimolecular transitions
+        # First transition (A → B in the paper)
+        k_plus = k_plus.at[0].set(params.k_bi)
+        k_minus = k_minus.at[0].set(params.k_bi * jnp.exp((dG[0] - dG[1]) / RT))
+
+        # Last transition if applicable (D → E in the paper)
+        if self.N > self.toehold + 1:
+            k_plus = k_plus.at[-1].set(params.k_bi)
+            k_minus = k_minus.at[-1].set(params.k_bi * jnp.exp((dG[-2] - dG[-1]) / RT))
+
+        # Format for compatibility with other methods
+        k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])  # k_plus needs final zero
+        k_minus = jnp.concatenate([jnp.zeros(1), k_minus])  # k_minus needs initial zero
+
+        return k_plus, k_minus
+
+
 
     def kawasaki(self, params):
         # TODO: incumbent dissociation
@@ -52,11 +83,9 @@ class IEL:
 
         k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])       #k_plus needs final zero
         k_minus = jnp.concatenate([jnp.zeros(1), k_minus])     #k_minus needs initial zero
-
         return k_plus, k_minus
 
     transitions = kawasaki
-
     # Gillespie algorithm
     #checking the rate and movement where its gonna be backwards or forwards
     def random_walk(self, params, start=0, end=-1):
@@ -89,7 +118,9 @@ class IEL:
             next_p = 1 / kp + km / kp * p
             return next_p, next_p
 
-        ks = jnp.stack(self.transitions(params)).T      #transition rates
+        ks = jnp.stack(self.transitions(params)).T
+
+
         _, ps = scan(f, 0, jnp.flip(ks, 0)[1:])
         return jnp.concatenate([jnp.flip(ps / ps.sum()), jnp.zeros(1)]) #Normalization & Formatting
 
@@ -97,11 +128,19 @@ class IEL:
     def time_mfp(self, params):
         def f(p, k):
             kp, km = k
-            next_p = 1/kp + km/kp*p
+            next_p = 1 / kp + km / kp * p
             return next_p, next_p
 
         ks = jnp.stack(self.transitions(params)).T
-        _, ps = scan(f, 0, jnp.flip(ks, 0)[1:])
+
+        #?????
+
+        if self.toehold == 0:
+            # For no-toehold case: process all states after initial (skip state 0)
+            _, ps = scan(f, 0, ks[1:])  # No flip, process in natural order
+        else:
+            _, ps = scan(f, 0, jnp.flip(ks, 0)[1:])
+
         return ps.sum()
 
     def k_eff(self, params, conc=1):
@@ -111,7 +150,3 @@ Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
 RT = 1.6898
 params_srinivas = Params(9.95/RT, -1.7/RT, 1.2/RT, 2.6/RT, 7.5e7, 3e6)
 
-if __name__ == '__main__':
-    sequence = 'GAAGTGACATGGAGACGTAGGGTATTGAATGAGGG'
-    print(IEL(sequence, toehold=0, conc=1e-9).k_eff(params_srinivas))
-    print(IEL(sequence, toehold=1, conc=1e-9).k_eff(params_srinivas))
