@@ -13,20 +13,45 @@ class IEL:
         self.toehold = toehold
         self.concentration=conc
 
-    def energy(self,params):
-        G_init, G_bp, G_p, G_s, *_ = params
-        G_init -= float(jnp.log(self.concentration))  #thermodynamics (RT*ln(concentration))
+    def energy_paper(self,params):
+
+        G_init,G_bp,G_p,G_s=9.95, -1.7, 1.2, 2.6
+
+        print(G_init)
         G = self.N*[0]      #G0
-        G[1] = G_init+G_bp  #G1
-        for positions in range(2,self.toehold+1):     #setting the energy one by one
+        G[1] = G_init       #G1
+
+        for positions in range(2,self.toehold+1):     #setting the energy one by one for toehold
             G[positions]= G[positions-1]+G_bp
 
         if self.N > self.toehold + 1:
             G[self.toehold + 1] = G[self.toehold] + G_p + G_s + (G_init if self.toehold == 0 else 0)
-            for pos in range(self.toehold + 2, self.N - 1, 2):
+            for pos in range(self.toehold + 2, self.N - 2, 2):
                 G[pos] = G[pos - 1] - G_s
                 G[pos + 1] = G[pos] + G_s
-            G[self.N - 1] = G[self.N - 2] - G_s - G_p - G_init
+            G[self.N - 2] = G[self.N - 3] - G_s - G_init        #second to last
+            G[self.N - 1] = G[self.N - 2] - G_p                 #last
+
+        return jnp.array(G)
+
+    def energy(self,params):
+        G_init, G_bp, G_p, G_s, *_ = params
+        G_init -= float(jnp.log(self.concentration))  #thermodynamics (RT*ln(concentration))
+        print(G_init)
+        G = self.N*[0]      #G0
+        G[1] = G_init +G_bp #G1
+
+        for positions in range(2,self.toehold+1):     #setting the energy one by one for toehold
+            G[positions]= G[positions-1]+G_bp
+
+        if self.N > self.toehold + 1:
+            G[self.toehold + 1] = G[self.toehold] + G_p + G_s + (G_init if self.toehold == 0 else 0)
+            for pos in range(self.toehold + 2, self.N - 2, 2):
+                G[pos] = G[pos - 1] - G_s
+                G[pos + 1] = G[pos] + G_s
+            G[self.N - 2] = G[self.N - 3] - G_s - G_init
+            G[self.N - 1] = G[self.N - 2] - G_p
+
         return jnp.array(G)
 
     def metropolis(self, params):
@@ -63,9 +88,9 @@ class IEL:
         return k_plus, k_minus
 
 
-
     def kawasaki(self, params):
         # TODO: incumbent dissociation
+        # TODO: check boltzman in kawasaki
         dG = self.energy(params)
         k_plus = params.k_uni * jnp.exp(-(dG[1:] - dG[:-1]) / 2)    #forward rate
         k_minus = params.k_uni * jnp.exp(-(dG[:-1] - dG[1:]) / 2)   #backward rate
@@ -147,6 +172,8 @@ class IEL:
         return conc/self.time_mfp(params)
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
+#RT = 0.590
 RT = 1.6898
 params_srinivas = Params(9.95/RT, -1.7/RT, 1.2/RT, 2.6/RT, 7.5e7, 3e6)
+#G_init= 9.95/RT
 
