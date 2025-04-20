@@ -16,7 +16,6 @@ class IEL:
     def energy_paper(self,params):
 
         G_init,G_bp,G_p,G_s=9.95, -1.7, 1.2, 2.6
-
         print(G_init)
         G = self.N*[0]      #G0
         G[1] = G_init       #G1
@@ -29,10 +28,11 @@ class IEL:
             for pos in range(self.toehold + 2, self.N - 2, 2):
                 G[pos] = G[pos - 1] - G_s
                 G[pos + 1] = G[pos] + G_s
-            G[self.N - 2] = G[self.N - 3] - G_s - G_init        #second to last
-            G[self.N - 1] = G[self.N - 2] - G_p                 #last
+            G[self.N - 2] = G[self.N - 3]  - G_init        #second to last
+            G[self.N - 1] = G[self.N - 2] -  G_s                #last
 
         return jnp.array(G)
+
 
     def energy(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
