@@ -13,10 +13,10 @@ class IEL:
         self.toehold = toehold
         self.concentration=conc
 
+
     def energy_paper(self,params):
 
         G_init,G_bp,G_p,G_s=9.95, -1.7, 1.2, 2.6
-        print(G_init)
         G = self.N*[0]      #G0
         G[1] = G_init       #G1
 
@@ -30,14 +30,13 @@ class IEL:
                 G[pos + 1] = G[pos] + G_s
             G[self.N - 2] = G[self.N - 3]  - G_init        #second to last
             G[self.N - 1] = G[self.N - 2] -  G_s                #last
-
         return jnp.array(G)
 
 
     def energy(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
         G_init -= float(jnp.log(self.concentration))  #thermodynamics (RT*ln(concentration))
-        print(G_init)
+
         G = self.N*[0]      #G0
         G[1] = G_init +G_bp #G1
 
@@ -76,7 +75,7 @@ class IEL:
         k_plus = k_plus.at[0].set(params.k_bi)
         k_minus = k_minus.at[0].set(params.k_bi * jnp.exp((dG[0] - dG[1]) / RT))
 
-        # Last transition if applicable (D → E in the paper)
+        # Last transition ac (D → E in the paper)
         if self.N > self.toehold + 1:
             k_plus = k_plus.at[-1].set(params.k_bi)
             k_minus = k_minus.at[-1].set(params.k_bi * jnp.exp((dG[-2] - dG[-1]) / RT))
@@ -111,17 +110,21 @@ class IEL:
         return k_plus, k_minus
 
     transitions = kawasaki
+
     # Gillespie algorithm
     #checking the rate and movement where its gonna be backwards or forwards
     def random_walk(self, params, start=0, end=-1):
+
         end = len(self.state)-1 if end == -1 else jnp.argwhere(self.state == end)
         k_plus, k_minus = self.transitions(params)
         time = 0
         pos = start
         yield time, self.state[pos]
+
         while pos != end:
             kp = k_plus[pos]
             km = k_minus[pos]
+
             k_total = kp + km
             tau = jnp.log(1 / random.random()) / k_total
             if k_total * random.random() < kp:
@@ -137,43 +140,43 @@ class IEL:
 
     # calculates steady state probability
     def occupancy(self, params):
-        #Recursive Probability Calculation
-        def f(p, k):
+
+        def calculate_passage_probability(p, k):              # Recursive Probability Calculation
+            print(p)
             kp, km = k
             next_p = 1 / kp + km / kp * p
             return next_p, next_p
 
         ks = jnp.stack(self.transitions(params)).T
 
+        _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
 
-        _, ps = scan(f, 0, jnp.flip(ks, 0)[1:])
         return jnp.concatenate([jnp.flip(ps / ps.sum()), jnp.zeros(1)]) #Normalization & Formatting
 
     #mean first passage time
     def time_mfp(self, params):
-        def f(p, k):
+
+        def calculate_passage_probability(p, k):     # Recursive Probability Calculation
             kp, km = k
             next_p = 1 / kp + km / kp * p
+
             return next_p, next_p
 
         ks = jnp.stack(self.transitions(params)).T
 
-        #?????
-
-        if self.toehold == 0:
-            # For no-toehold case: process all states after initial (skip state 0)
-            _, ps = scan(f, 0, ks[1:])  # No flip, process in natural order
-        else:
-            _, ps = scan(f, 0, jnp.flip(ks, 0)[1:])
-
+        ks = jnp.stack(self.transitions(params)).T
+        _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
-    def k_eff(self, params, conc=1):
-        return conc/self.time_mfp(params)
+
+    def k_eff(self, params, conc=1e-9):
+        time =self.time_mfp(params)
+        rate= conc / time
+        return rate
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
-#RT = 0.590
-RT = 1.6898
+RT = 0.590
+#RT = 1.6898
 params_srinivas = Params(9.95/RT, -1.7/RT, 1.2/RT, 2.6/RT, 7.5e7, 3e6)
 #G_init= 9.95/RT
 
