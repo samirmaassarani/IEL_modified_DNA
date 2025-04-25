@@ -15,6 +15,10 @@ class IEL:
 
     def energy_paper(self,params):
 
+        if self.toehold==0:
+            self.zero_toehold_enegry(params)
+            return jnp.array(G)
+
         G = self.N*[0]      #G0
         G[1] = params.G_init       #G1
 
@@ -42,6 +46,7 @@ class IEL:
             G[pos + 1] = G[pos] - G_s
         G[self.N-2]= G[self.N-1] - G_init
         G[self.N-1] = G[self.N - 2] + G_bp
+        print(jnp.array(G))
         return jnp.array(G)
 
 
