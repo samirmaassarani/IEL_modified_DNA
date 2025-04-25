@@ -14,9 +14,10 @@ class IEL:
 
 
     def energy_paper(self,params):
-
+        G = self.N * [0]
         if self.toehold==0:
-            self.zero_toehold_enegry(params)
+            print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
+            G= self.zero_toehold_enegry(params)
             return jnp.array(G)
 
         G = self.N*[0]      #G0
@@ -46,7 +47,6 @@ class IEL:
             G[pos + 1] = G[pos] - G_s
         G[self.N-2]= G[self.N-1] - G_init
         G[self.N-1] = G[self.N - 2] + G_bp
-        print(jnp.array(G))
         return jnp.array(G)
 
 
@@ -71,7 +71,7 @@ class IEL:
 
     def energy_paperRT(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
-        #print(f"G_init {G_init}, G_bp {G_bp}, G_p {G_p}, G_s {G_s}. RT {RT}, and conc {self.concentration}")
+
         G = self.N * [0]  # G0
         G[1] = (G_init - jnp.log(self.concentration)) / RT
 
