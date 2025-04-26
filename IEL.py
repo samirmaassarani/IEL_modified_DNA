@@ -20,7 +20,7 @@ class IEL:
             G= self.zero_toehold_enegry(params)
             return jnp.array(G)
 
-        G = self.N*[0]      #G0
+        G = self.N*[0]
         G[1] = params.G_init       #G1
 
         for positions in range(2,self.toehold+1):     #setting the energy one by one for toehold
@@ -73,7 +73,13 @@ class IEL:
         G_init, G_bp, G_p, G_s, *_ = params
 
         G = self.N * [0]  # G0
-        G[1] = (G_init - jnp.log(self.concentration)) / RT
+
+        if self.toehold == 0:
+            print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
+            G = self.zero_toehold_enegry(params)
+            return jnp.array(G)
+
+        G[1] = (G_init - jnp.log(self.concentration))/RT
 
         for positions in range(2, self.toehold + 1):  # setting the energy one by one for toehold
             G[positions] = G[positions - 1] + G_bp/RT
@@ -92,7 +98,7 @@ class IEL:
 
         # For unimolecular transitions
         energy_diff = dG[1:] - dG[:-1]
-        #intialize forward and backward
+        # Initialize forward and backward
         k_plus = params.k_uni * jnp.ones(self.N - 1)
         k_minus = params.k_uni * jnp.ones(self.N - 1)
 
@@ -100,25 +106,26 @@ class IEL:
         uphill_forward = energy_diff > 0
         uphill_backward = energy_diff < 0
 
-        #implement metropolis (Boltzmann) RT
-        k_plus = k_plus.at[uphill_forward].mul(jnp.exp(-energy_diff[uphill_forward] ))
+        # Implement metropolis (Boltzmann) RT
+        k_plus = k_plus.at[uphill_forward].mul(jnp.exp(-energy_diff[uphill_forward]))
+        k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward]))
 
-        k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward] ))
+        #  bimolecular transitions
 
-        # Handle bimolecular transitions
-        # First transition (A → B in the paper)
         k_plus = k_plus.at[0].set(params.k_bi)
-        k_minus = k_minus.at[0].set(params.k_bi * jnp.exp((dG[0] - dG[1])))
+        # For first transition, if going uphill (dG[1] > dG[0]), backward should be fast
+        k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
 
-        # Last transition ac (D → E in the paper)
+        # Last transition
         if self.N > self.toehold + 1:
-            k_plus = k_plus.at[-1].set(params.k_bi)         #diffusion limited
-            k_minus = k_minus.at[-1].set(params.k_bi *
-                                         jnp.exp(dG[-2] - dG[-1]))           #backward rate is energy-dependent
+            k_plus = k_plus.at[-1].set(params.k_bi)
+            # For last transition, if going downhill (dG[-1] < dG[-2]), forward is fast and backward should be slowed
+            k_minus = k_minus.at[-1].set(params.k_bi * jnp.exp(-energy_diff[-1]))
 
         # Format for compatibility with other methods
         k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])  # k_plus needs final zero
-        k_minus = jnp.concatenate([jnp.zeros(1), k_minus])  # k_minus needs initial zero"""
+        k_minus = jnp.concatenate([jnp.zeros(1), k_minus])  # k_minus needs initial zero
+
         return k_plus, k_minus
 
     def kawasaki(self, params):
@@ -183,8 +190,6 @@ class IEL:
         def calculate_passage_probability(p, k):              # Recursive Probability Calculation
             kp, km = k
             next_p = 1 / kp + km / kp * p
-            #print("return:")
-            #print(next_p,next_p)
             return next_p, next_p
 
         ks = jnp.stack(self.transitions(params)).T
@@ -216,7 +221,7 @@ class IEL:
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
 params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 7.5e7, 3e6)
 RT = 0.590
-#RT = 1.6898
+
 
 def debug_model(max_toehold=10):
     for toehold in range(max_toehold + 1):
