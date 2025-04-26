@@ -9,15 +9,15 @@ import jax.numpy as jnp
 from jax.lax import scan
 
 class Double:
-    def __init__(self, Sequence, toehold, conc,first,second,case):
+    def __init__(self, Sequence, toehold, conc,incumbent1,incumbent2,case):
 
         self.state = jnp.concatenate([jnp.arange(0, toehold + 1),
                                       jnp.arange(toehold + .5, len(Sequence) + .5, .5)])
         self.N = len(self.state)
         self.toehold = toehold
         self.concentration = conc
-        self.first_incumbent= first
-        self.second_incumbent=second
+        self.first_incumbent= incumbent1
+        self.second_incumbent=incumbent2
         self.condition=True
         if case == "M":
             self.condition=False
