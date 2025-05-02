@@ -1,11 +1,7 @@
 from collections import namedtuple
 import random
-from operator import index
-
 import jax.numpy as jnp
-from jax.core import str_eqn_compact
 from jax.lax import scan
-from scipy.stats import energy_distance
 
 
 class IEL:
@@ -20,21 +16,23 @@ class IEL:
         self.positions = []
         self.nb_incumbets =1
 
-
-    def IEL(self,params):
         for index, char in enumerate(self.seq):
             if char == "*":
                 self.nb_incumbets += 1
                 self.positions.append(index)
 
+
+    def IEL(self,params):
+
         #one incumbent
         if self.nb_incumbets == 1:
             print(f'single incumbent')
             G= self.energy_paper(params)
+            return jnp.array(G)
 
         #two incumbents
         elif self.nb_incumbets >= 2:
-            print(f'Double incumbent with a mismatc at {self.positions}')
+            print(f'number of incumbents is {self.nb_incumbets}.')
             G= self.double_incumbent_energy(params)
         return jnp.array(G)
 
@@ -77,26 +75,22 @@ class IEL:
 
 
     def double_incumbent_energy(self,params):
-
-        index_1mm = jnp.where(self.state == float(self.positions[0]), size=1)[0]
-        print(index_1mm)
-
-        if self.nb_incumbets : #there incumbents
-            print(f'number of incumbents is {self.nb_incumbets} mismatch at {self.positions}')
-            second_mm=self.positions[1]
-            index_2mm = jnp.where(self.state == float(self.positions[1]), size=1)[0]
-            print(index_2mm)
-        else:   #double incumbents
-            print(f'number of incumbents is {self.nb_incumbets} and mismatch at the bp = {self.positions}.')
-
         G_init, G_bp, G_p, G_s, *_ = params
         G_bm=7.4
         G_mm = 4
-        print(self.state, len(self.state))
+
+        index_1mm = jnp.where(self.state == float(self.positions[0]), size=1)[0]
+
+        if self.nb_incumbets==3 : #there incumbents
+            print(f'number of incumbents is {self.nb_incumbets}.')
+            second_mm=self.positions[1]
+            index_2mm = jnp.where(self.state == float(self.positions[1]), size=1)[0]
+        else:   #double incumbents
+            print(f'number of incumbents is {self.nb_incumbets}.')
+
         G = self.N * [0]
-        print(len(G))
         #intitail binding
-        G[1]=G_init
+        G[1] = G_init
         #for toehold
         for steps in range(2, self.toehold + 1):
             G[steps] = G[steps - 1] + G_bp
@@ -115,12 +109,48 @@ class IEL:
 
         G[self.N - 2] = G[self.N - 3] - params.G_init  # second to last
         G[self.N-1] = G[self.N - 2] - params.G_s
-
         return jnp.array(G)
+
+    def double_incumbent_energyRT(self,params):
+        G_init, G_bp, G_p, G_s, *_ = params
+        G_bm=7.4
+        G_mm = 4
+
+        index_1mm = jnp.where(self.state == float(self.positions[0]), size=1)[0]
+
+        if self.nb_incumbets==3 : #there incumbents
+
+            second_mm=self.positions[1]
+            index_2mm = jnp.where(self.state == float(self.positions[1]), size=1)[0]
+
+
+        G = self.N * [0]
+        #intitail binding
+        G[1] = G_init
+        #for toehold
+        for steps in range(2, self.toehold + 1):
+            G[steps] = G[steps - 1] + G_bp/RT
+
+        #for first bp after toehold
+        G[self.toehold + 1]= G[self.toehold]+G_p/RT +G_s/RT
+
+        for steps in range(self.toehold + 2,self.N-1,2):
+
+            if steps==index_1mm or (steps==index_2mm if self.nb_incumbets==3 else False) :
+                G[steps]= G[steps-1]-(G_mm-G_s)/RT
+                G[steps+1]= G[steps]+G_init
+            else:
+                G[steps] = G[steps - 1] - G_s/RT
+                G[steps + 1] = G[steps] + G_s/RT
+
+        G[self.N - 2] = G[self.N - 3] - G_init/RT  # second to last
+        G[self.N-1] = G[self.N - 2] - G_s/RT
+        return jnp.array(G)
+
     #implements the enegry divided by RT
     def energy_paperRT(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
-        G_init = params.G_init - jnp.log(self.concentration)
+        G_init = params.G_init//RT - jnp.log(self.concentration)
 
         G = self.N * [0]  # G0
 
@@ -144,7 +174,10 @@ class IEL:
         return jnp.array(G)
 
     def metropolis(self, params):
-        dG = self.energy_paperRT(params)
+        if self.nb_incumbets==1:
+            dG = self.energy_paperRT(params)
+        else:
+            dG = self.double_incumbent_energyRT(params)
 
         # For unimolecular transitions
         energy_diff = dG[1:] - dG[:-1]
@@ -181,10 +214,7 @@ class IEL:
         return k_plus, k_minus
 
     def kawasaki(self, params):
-        if self.incumbents>=2:
-            dG = self.double_incumbent_energy(params)
-        else:
-            dG =self.energy_paperRT(params)
+        dG=self.IEL(params)
 
         energy_diff = dG[1:] - dG[:-1]
 
