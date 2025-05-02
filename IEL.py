@@ -1,7 +1,12 @@
 from collections import namedtuple
 import random
+from operator import index
+
 import jax.numpy as jnp
+from jax.core import str_eqn_compact
 from jax.lax import scan
+from scipy.stats import energy_distance
+
 
 class IEL:
 
@@ -11,6 +16,28 @@ class IEL:
         self.N =len(self.state)
         self.toehold = toehold
         self.concentration=conc
+        self.seq=Sequence
+        self.positions = []
+        self.nb_incumbets =1
+
+
+    def IEL(self,params):
+        for index, char in enumerate(self.seq):
+            if char == "*":
+                self.nb_incumbets += 1
+                self.positions.append(index)
+
+        #one incumbent
+        if self.nb_incumbets == 1:
+            print(f'single incumbent')
+            G= self.energy_paper(params)
+
+        #two incumbents
+        elif self.nb_incumbets >= 2:
+            print(f'Double incumbent with a mismatc at {self.positions}')
+            G= self.double_incumbent_energy(params)
+        return jnp.array(G)
+
 
     def energy_paper(self,params):
         G = self.N * [0]
@@ -49,6 +76,48 @@ class IEL:
         return jnp.array(G)
 
 
+    def double_incumbent_energy(self,params):
+
+        index_1mm = jnp.where(self.state == float(self.positions[0]), size=1)[0]
+        print(index_1mm)
+
+        if self.nb_incumbets : #there incumbents
+            print(f'number of incumbents is {self.nb_incumbets} mismatch at {self.positions}')
+            second_mm=self.positions[1]
+            index_2mm = jnp.where(self.state == float(self.positions[1]), size=1)[0]
+            print(index_2mm)
+        else:   #double incumbents
+            print(f'number of incumbents is {self.nb_incumbets} and mismatch at the bp = {self.positions}.')
+
+        G_init, G_bp, G_p, G_s, *_ = params
+        G_bm=7.4
+        G_mm = 4
+        print(self.state, len(self.state))
+        G = self.N * [0]
+        print(len(G))
+        #intitail binding
+        G[1]=G_init
+        #for toehold
+        for steps in range(2, self.toehold + 1):
+            G[steps] = G[steps - 1] + G_bp
+
+        #for first bp after toehold
+        G[self.toehold + 1]= G[self.toehold]+G_p +G_s
+
+        for steps in range(self.toehold + 2,self.N-1,2):
+
+            if steps==index_1mm or (steps==index_2mm if self.nb_incumbets==3 else False) :
+                G[steps]= G[steps-1]-(G_mm-G_s)
+                G[steps+1]= G[steps]+G_init
+            else:
+                G[steps] = G[steps - 1] - params.G_s
+                G[steps + 1] = G[steps] + params.G_s
+
+        G[self.N - 2] = G[self.N - 3] - params.G_init  # second to last
+        G[self.N-1] = G[self.N - 2] - params.G_s
+
+        return jnp.array(G)
+    #implements the enegry divided by RT
     def energy_paperRT(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
         G_init = params.G_init - jnp.log(self.concentration)
@@ -97,7 +166,7 @@ class IEL:
             k_plus = k_plus.at[0].set(0.0)  # No spontaneous initiation
             k_minus = k_minus.at[0].set(0.0)
         else:
-            k_plus = k_plus.at[0].set(params.k_bi)
+            k_plus = k_plus.at[0].set(params.k_bi * self.concentration)  # Include concentration
             k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
 
         # Last transition
@@ -112,9 +181,11 @@ class IEL:
         return k_plus, k_minus
 
     def kawasaki(self, params):
+        if self.incumbents>=2:
+            dG = self.double_incumbent_energy(params)
+        else:
+            dG =self.energy_paperRT(params)
 
-        dG =self.energy_paperRT(params)
-        #print(dG)
         energy_diff = dG[1:] - dG[:-1]
 
         # Kawasaki rule: symmetric rates
@@ -195,9 +266,9 @@ class IEL:
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
-    def k_eff(self, params,conc=1.0):
+    def k_eff(self, params, conc=None):
         time = self.time_mfp(params)
-        rate= 1/(time*conc)
+        rate = 1 / time
         return rate
 
 
