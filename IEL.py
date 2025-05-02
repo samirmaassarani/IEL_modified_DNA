@@ -12,7 +12,6 @@ class IEL:
         self.toehold = toehold
         self.concentration=conc
 
-
     def energy_paper(self,params):
         G = self.N * [0]
         if self.toehold==0:
@@ -31,8 +30,8 @@ class IEL:
             for pos in range(self.toehold + 2, self.N - 2, 2):
                 G[pos] = G[pos - 1] - params.G_s
                 G[pos + 1] = G[pos] + params.G_s
-            G[self.N - 2] = G[self.N - 3]  - params.G_init        #second to last
-            G[self.N - 1] = G[self.N - 2] -  params.G_s                #last
+            G[self.N - 2] = G[self.N - 3] - params.G_init  # second to last
+            G[self.N - 1] = G[self.N - 2] - params.G_s                #last
         return jnp.array(G)
 
     # implements the zero toehold case IEL
@@ -50,32 +49,14 @@ class IEL:
         return jnp.array(G)
 
 
-    def energy_intial(self, params):
-
-        G_init, G_bp, G_p, G_s, *_ = params
-
-        G_init -= float(jnp.log(self.concentration))
-        G = self.N * [0]
-        G[1] = G_init + G_bp
-
-        for pos in range(2, self.toehold + 1):
-            G[pos] = G[pos - 1] + G_bp
-
-        if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + G_p + G_s + (G_init if self.toehold == 0 else 0)
-            for pos in range(self.toehold + 2, self.N - 1, 2):
-                G[pos] = G[pos - 1] - G_s
-                G[pos + 1] = G[pos] + G_s
-            G[self.N - 1] = G[self.N - 2] - G_s - G_p - G_init
-        return jnp.array(G)
-
     def energy_paperRT(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
+        G_init = params.G_init - jnp.log(self.concentration)
 
         G = self.N * [0]  # G0
 
         if self.toehold == 0:
-            print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
+           # print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
             G = self.zero_toehold_enegry(params)
             return jnp.array(G)
 
@@ -99,6 +80,7 @@ class IEL:
         # For unimolecular transitions
         energy_diff = dG[1:] - dG[:-1]
         # Initialize forward and backward
+
         k_plus = params.k_uni * jnp.ones(self.N - 1)
         k_minus = params.k_uni * jnp.ones(self.N - 1)
 
@@ -111,16 +93,17 @@ class IEL:
         k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward]))
 
         #  bimolecular transitions
-
-        k_plus = k_plus.at[0].set(params.k_bi)
-        # For first transition, if going uphill (dG[1] > dG[0]), backward should be fast
-        k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
+        if self.toehold==0:
+            k_plus = k_plus.at[0].set(0.0)  # No spontaneous initiation
+            k_minus = k_minus.at[0].set(0.0)
+        else:
+            k_plus = k_plus.at[0].set(params.k_bi)
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
 
         # Last transition
         if self.N > self.toehold + 1:
-            k_plus = k_plus.at[-1].set(params.k_bi)
-            # For last transition, if going downhill (dG[-1] < dG[-2]), forward is fast and backward should be slowed
-            k_minus = k_minus.at[-1].set(params.k_bi * jnp.exp(-energy_diff[-1]))
+            k_plus = k_plus.at[-1].set(params.k_uni)  # Unimolecular dissociation
+            k_minus = k_minus.at[-1].set(0.0)  # Irreversible
 
         # Format for compatibility with other methods
         k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])  # k_plus needs final zero
@@ -215,35 +198,11 @@ class IEL:
     def k_eff(self, params,conc=1.0):
         time = self.time_mfp(params)
         rate= 1/(time*conc)
-        print(rate)
         return rate
+
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
 params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 7.5e7, 3e6)
 RT = 0.590
 
 
-def debug_model(max_toehold=10):
-    for toehold in range(max_toehold + 1):
-        # Create a test sequence
-        test_seq = "A" * (toehold + 10)  # Adjust length as needed
-
-        # Create model instance
-        model = IEL(test_seq, toehold, 1)
-
-        # Calculate energy landscape
-        params = params_srinivas
-        energy = model.energy_paper(params)
-
-        # Calculate MFPT
-        mfpt = model.time_mfp(params)
-
-        # Calculate k_eff correctly
-        k_eff = 1 / (mfpt )
-
-        print(f"Toehold: {toehold}, MFPT: {mfpt:.2e}, k_eff: {k_eff:.2e}")
-
-
- # Call the debug function
-if __name__ == "__main__":
-    debug_model(15)  # Test toehold lengths 0-15
