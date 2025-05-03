@@ -22,7 +22,7 @@ class IEL:
                 self.positions.append(index)
 
 
-    def IEL(self,params):
+    def energy_lanscape(self,params):
 
         #one incumbent
         if self.nb_incumbets == 1:
@@ -122,7 +122,6 @@ class IEL:
 
             second_mm=self.positions[1]
             index_2mm = jnp.where(self.state == float(self.positions[1]), size=1)[0]
-
 
         G = self.N * [0]
         #intitail binding
@@ -296,10 +295,21 @@ class IEL:
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
-    def k_eff(self, params, conc=None):
+    def k_eff(self, params, conc=1):
         time = self.time_mfp(params)
         rate = 1 / time
         return rate
+
+    def accelartion(self,params):
+        G_init, G_bp, G_p, G_s, *_ = params
+        sequence = 'GAAGTGACATGGAGACGTAGGGTATTGAATGAGGGATATATATTTAGAGGA'
+        model_15 = IEL(sequence, toehold=15, conc=1e-9)
+        model_0 = IEL(sequence, toehold=0, conc=1e-9)
+
+        keff_15=model_15.k_eff(params)
+        keff_0=model_0.k_eff(params)
+        acceleration = jnp.log10(keff_15 / keff_0)
+        return acceleration
 
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
