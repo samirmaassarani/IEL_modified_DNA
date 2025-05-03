@@ -7,7 +7,7 @@ landscape = IEL(sequence[:30], toehold=6, conc=1e-9)
 params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 7.5e7, 3e6)
 
 
-dG = landscape.IEL(params_srinivas)
+dG = landscape.energy_lanscape(params_srinivas)
 fig, ax = plt.subplots()
 ax.set_title("Energy landscape (paper)")
 ax.set_xlabel("pos")
