@@ -300,16 +300,17 @@ class IEL:
         rate = 1 / time
         return rate
 
-    def accelartion(self,params):
+    def acceleration(self, params):
+        #TODO: need to be fixed (keff for 0 is nan)
         G_init, G_bp, G_p, G_s, *_ = params
-        sequence = 'GAAGTGACATGGAGACGTAGGGTATTGAATGAGGGATATATATTTAGAGGA'
+        sequence = self.seq
         model_15 = IEL(sequence, toehold=15, conc=1e-9)
         model_0 = IEL(sequence, toehold=0, conc=1e-9)
-
         keff_15=model_15.k_eff(params)
         keff_0=model_0.k_eff(params)
         acceleration = jnp.log10(keff_15 / keff_0)
         return acceleration
+
 
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
