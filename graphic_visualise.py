@@ -1,9 +1,9 @@
 from IEL import *
 from matplotlib import pyplot as plt
 import numpy as np
-sequence ='GAAGTGACAT*GGAGAC*GTAGGGTATTGAATGAGGGATATATATTTAGAGGA'
+sequence ='GAAGTGACAT*GGAGACGTAGGGTATTGAATGAGGGATATATATTTAGAGGA'
 
-landscape = IEL(sequence[:30], toehold=6, conc=1e-9)
+landscape = IEL(sequence[:20], toehold=6, conc=1e-6)
 params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 7.5e7, 3e6)
 
 
@@ -15,15 +15,7 @@ ax.set_ylabel("dG")
 ax.plot(landscape.state, dG, 'o-')
 plt.show()
 
-dG = landscape.energy_paperRT(params_srinivas)
-fig, ax = plt.subplots()
-ax.set_title("Energy landscape (with params/RT)")
-ax.set_xlabel("pos")
-ax.set_ylabel("dG")
-ax.plot(landscape.state, dG, 'o-')
-plt.show()
-
-dG = landscape.energy_paperRT(params_srinivas)
+dG = landscape.energy_lanscape_rt(params_srinivas)
 k_plus, k_minus = landscape.metropolis(params_srinivas)
 fig, ax = plt.subplots()
 ax.set_title("Transition rates(metro)")
@@ -47,7 +39,7 @@ ax.plot(landscape.state, k_minus, label="$k_i^-$")
 ax.legend()
 plt.show()
 
-tmfp = [IEL(sequence, toehold=th, conc=1 ).k_eff(params_srinivas) for th in range(15)]
+tmfp = [IEL(sequence, toehold=th, conc=1e-6 ).k_eff(params_srinivas) for th in range(15)]
 fig, ax = plt.subplots()
 ax.set_title("Expected reaction rate constant")
 ax.set_xlabel("Toehold length")
@@ -56,4 +48,3 @@ ax.set_ylabel("$k_{eff}$")
 ax.set_yscale('log')
 ax.plot(tmfp, 'o-')
 plt.show()
-

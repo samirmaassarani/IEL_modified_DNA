@@ -36,12 +36,25 @@ class IEL:
             G= self.double_incumbent_energy(params)
         return jnp.array(G)
 
+    def energy_lanscape_rt(self,params):
+
+        #one incumbent
+        if self.nb_incumbets == 1:
+            #print(f'single incumbent')
+            G= self.energy_paper_rt(params)
+            return jnp.array(G)
+
+        #two incumbents
+        elif self.nb_incumbets >= 2:
+            #print(f'number of incumbents is {self.nb_incumbets}.')
+            G= self.double_incumbent_energy_rt(params)
+        return jnp.array(G)
 
     def energy_paper(self,params):
         G = self.N * [0]
         if self.toehold==0:
             print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
-            G= self.zero_toehold_enegry(params)
+            G= self.zero_toehold_energy(params)
             return jnp.array(G)
 
         G = self.N*[0]
@@ -60,7 +73,7 @@ class IEL:
         return jnp.array(G)
 
     # implements the zero toehold case IEL
-    def zero_toehold_enegry(self, params):
+    def zero_toehold_energy(self, params):
         G_init, G_bp, G_p, G_s, *_ = params
         G = self.N * [0]  # G0
         G[1] = -G_bp
@@ -73,11 +86,25 @@ class IEL:
         G[self.N-1] = G[self.N - 2] + G_bp
         return jnp.array(G)
 
+    def zero_toehold_energy_rt(self, params):
+        G_init, G_bp, G_p, G_s, *_ = params
+        G = self.N * [0]  # G0
+        G[1] = -G_bp/RT
+        G[2] = G[1] + ((G_init - jnp.log(self.concentration))/RT)
+
+        for pos in range(3, len(G) - 1, 2):
+            G[pos] = G[pos - 1] + G_s/RT
+            G[pos + 1] = G[pos] - G_s/RT
+
+        G[self.N-2]= G[self.N-1] - G_init/RT
+        G[self.N-1] = G[self.N - 2] + G_bp/RT
+        return jnp.array(G)
+
 
     def double_incumbent_energy(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
         G_bm=7.4
-        G_mm = 4
+        G_mm = 9.5
 
         index_1mm = jnp.where(self.state == float(self.positions[0]), size=1)[0]
 
@@ -111,10 +138,10 @@ class IEL:
         G[self.N-1] = G[self.N - 2] - params.G_s
         return jnp.array(G)
 
-    def double_incumbent_energyRT(self,params):
+    def double_incumbent_energy_rt(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
         G_bm=7.4
-        G_mm = 4
+        G_mm = 9.5
 
         index_1mm = jnp.where(self.state == float(self.positions[0]), size=1)[0]
 
@@ -147,15 +174,13 @@ class IEL:
         return jnp.array(G)
 
     #implements the enegry divided by RT
-    def energy_paperRT(self,params):
+    def energy_paper_rt(self,params):
         G_init, G_bp, G_p, G_s, *_ = params
-        G_init = params.G_init//RT - jnp.log(self.concentration)
-
         G = self.N * [0]  # G0
 
         if self.toehold == 0:
-           # print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
-            G = self.zero_toehold_enegry(params)
+            print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
+            G = self.zero_toehold_energy_rt(params)
             return jnp.array(G)
 
         G[1] = (G_init - jnp.log(self.concentration))/RT
@@ -173,10 +198,7 @@ class IEL:
         return jnp.array(G)
 
     def metropolis(self, params):
-        if self.nb_incumbets==1:
-            dG = self.energy_paperRT(params)
-        else:
-            dG = self.double_incumbent_energyRT(params)
+        dG= self.energy_lanscape_rt(params)
 
         # For unimolecular transitions
         energy_diff = dG[1:] - dG[:-1]
@@ -198,8 +220,8 @@ class IEL:
             k_plus = k_plus.at[0].set(0.0)  # No spontaneous initiation
             k_minus = k_minus.at[0].set(0.0)
         else:
-            k_plus = k_plus.at[0].set(params.k_bi * self.concentration)  # Include concentration
-            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
+            k_plus = k_plus.at[0].set(params.k_bi*self.concentration )  # Include concentration
+            k_minus = k_minus.at[0].set(params.k_bi *self.concentration* jnp.exp(energy_diff[0]))
 
         # Last transition
         if self.N > self.toehold + 1:
@@ -213,7 +235,7 @@ class IEL:
         return k_plus, k_minus
 
     def kawasaki(self, params):
-        dG=self.IEL(params)
+        dG=self.energy_lanscape_rt(params)
 
         energy_diff = dG[1:] - dG[:-1]
 
@@ -238,12 +260,11 @@ class IEL:
     transitions = metropolis
 
     # Gillespie algorithm
-    #checking the rate and movement where its gonna be backwards or forwards
 
     def random_walk(self, params, start=0, end=-1):
 
         end = len(self.state)-1 if end == -1 else jnp.argwhere(self.state == end)
-        k_plus, k_minus = self.transitions(params)
+        k_plus, k_minus = self.metropolis(params)
         time = 0
         pos = start
 
@@ -275,7 +296,7 @@ class IEL:
             next_p = 1 / kp + km / kp * p
             return next_p, next_p
 
-        ks = jnp.stack(self.transitions(params)).T
+        ks = jnp.stack(self.metropolis(params)).T
 
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
 
@@ -289,15 +310,13 @@ class IEL:
             next_p = 1 / kp + km / kp * p
             return next_p, next_p
 
-        ks = jnp.stack(self.transitions(params)).T
-
-        ks = jnp.stack(self.transitions(params)).T
+        ks = jnp.stack(self.metropolis(params)).T
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
     def k_eff(self, params, conc=1):
         time = self.time_mfp(params)
-        rate = 1 / time
+        rate = 1 / (time*self.concentration)
         return rate
 
     def acceleration(self, params):
