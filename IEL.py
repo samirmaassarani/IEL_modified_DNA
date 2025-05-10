@@ -2,6 +2,9 @@ from collections import namedtuple
 import random
 import jax.numpy as jnp
 from jax.lax import scan
+from numpy.ma.core import count
+from scipy.linalg import toeplitz
+
 
 class IEL:
 
@@ -18,58 +21,62 @@ class IEL:
         self.invader_mm={}
         "(+) represents mismatch."
         "(-) represents a nick."
-
         for index, char in enumerate(self.seq):
-            if char == "+"or char=='-':
+            if char == "+" or char == '-':
                 self.nb_incumbents += 1
-                if char=="+":
-                    self.pm[index]= "+"
+                if char == "+":
+                    self.pm[index] = "+"
                 else:
-                    self.pm[index]= "-"
+                    self.pm[index] = "-"
         print(f'the number of incumbents is {self.nb_incumbents}. The mismatch and nicks are at {self.pm}.')
 
-        for index, char in enumerate(self.invader):     #for invader mismatches
-            if  char=='-':
-                self.invader_mm[index]= "-"
+        for index, char in enumerate(self.invader):  # for invader mismatches
+            if char == '+':
+                self.invader_mm[index] = "+"
         print(f'The mismatch and nicks on the invader strand are at {self.invader_mm}.')
 
-
-    def energy_lanscape(self,params):
-        #one incumbent
+    def energy_lanscape(self, params):
+        # one incumbent
         if self.nb_incumbents == 1:
-            G= self.energy_paper(params)
+            G = self.energy_paper(params)
             return jnp.array(G)
 
-        #two incumbents
-        elif self.nb_incumbents >= 2:
-            G= self.double_incumbent_energy(params)
+        # two incumbents
+        else :
+            G = self.double_incumbent_energy(params)
         return jnp.array(G)
 
-    def energy_paper(self,params):
+    def energy_paper(self, params):
+        print('Energy paper to be implemented.')
         G = self.N * [0]
-        if self.toehold==0:
+
+        if self.toehold == 0:
             print(f"Zero Toehold Case to be implemented as Toehold is {self.toehold} ")
-            G= self.zero_toehold_energy(params)
+            G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
-        G = self.N*[0]
-        G[1] = params.G_init       #G1
+        G = self.N * [0]
+        G[1] = params.G_init  # G1
 
-        for positions in range(2,self.toehold+1):     #setting the energy one by one for toehold
-            G[positions]= G[positions-1]+params.G_bp
+        for positions in range(2, self.toehold + 1):  # setting the energy one by one for toehold
+            if positions in self.invader_mm:  # check for mm in invader
+                G[positions] = G[positions - 1] + params.G_init
+            else:
+                G[positions] = G[positions - 1] + params.G_bp
 
         if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s + (params.G_init if self.toehold == 0 else 0)
+            G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s
+
             for pos in range(self.toehold + 2, self.N - 2, 2):
                 G[pos] = G[pos - 1] - params.G_s
                 G[pos + 1] = G[pos] + params.G_s
             G[self.N - 2] = G[self.N - 3] - params.G_init  # second to last
-            G[self.N - 1] = G[self.N - 2] - params.G_s                #last
+            G[self.N - 1] = G[self.N - 2] - params.G_s  # last
         return jnp.array(G)
 
     def zero_toehold_energy(self, params):
         print("zero toehold to be implemented.")
-        G_init, G_bp, G_p, G_s,G_mm, *_ = params
+        G_init, G_bp, G_p, G_s, G_mm, *_ = params
         G = self.N * [0]  # G0
         G[1] = -G_bp
         G[2] = G[1] + G_init
@@ -77,27 +84,30 @@ class IEL:
         for pos in range(3, len(G) - 1, 2):
             G[pos] = G[pos - 1] + G_s
             G[pos + 1] = G[pos] - G_s
-        G[self.N-2]= G[self.N-1] - G_init
-        G[self.N-1] = G[self.N - 2] + G_bp
+        G[self.N - 2] = G[self.N - 1] - G_init
+        G[self.N - 1] = G[self.N - 2] + G_bp
         return jnp.array(G)
 
     def double_incumbent_energy(self, params):
         print("Double incumbent system to be implemented.")
-        G_init, G_bp, G_p, G_s,G_mm,G_nick, *_ = params
+        G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
         G = self.N * [0]
-        count = self.toehold+1
+        count = self.toehold + 1
 
-        G[1] = G_init       # initial binding
+        G[1] = G_init  # initial binding
 
-        for steps in range(2, self.toehold + 1):    # for toehold
-            G[steps] = G[steps - 1] + G_bp
+        for steps in range(2, self.toehold + 1):  # for toehold
+            if steps in self.invader_mm:
+                G[steps] = G[steps - 1] + G_init
+            else:
+                G[steps] = G[steps - 1] + G_bp
 
         # for first bp after toehold
         G[self.toehold + 1] = G[self.toehold] + G_p + G_s
 
         for steps in range(self.toehold + 2, self.N - 1, 2):
             if count in self.pm:
-                if self.pm[count]=="+":
+                if self.pm[count] == "+":
                     G[steps] = G[steps - 1] + (G_mm - G_s)
                 else:
                     G[steps] = G[steps - 1] + (G_nick - G_s)
@@ -105,27 +115,27 @@ class IEL:
             else:
                 G[steps] = G[steps - 1] - G_s
                 G[steps + 1] = G[steps] + G_s
-            count+=1
+            count += 1
 
-        G[self.N - 2] = G[self.N - 3] - G_init # second to last
+        G[self.N - 2] = G[self.N - 3] - G_init  # second to last
         G[self.N - 1] = G[self.N - 2] - G_s
         return jnp.array(G)
 
-    #implements the energy landscape with RT
-    def energy_lanscape_rt(self,params):
+    # implements the energy landscape with RT
+    def energy_lanscape_rt(self, params):
 
-        #one incumbent
+        # one incumbent
         if self.nb_incumbents == 1:
-            G= self.energy_paper_rt(params)
+            G = self.energy_paper_rt(params)
             return jnp.array(G)
 
-        #two incumbents
+        # two incumbents
         elif self.nb_incumbents >= 2:
-            G= self.double_incumbent_energy_rt(params)
+            G = self.double_incumbent_energy_rt(params)
         return jnp.array(G)
 
-    def energy_paper_rt(self,params):
-        G_init, G_bp, G_p, G_s,G_mm, *_ = params
+    def energy_paper_rt(self, params):
+        G_init, G_bp, G_p, G_s, G_mm, *_ = params
         G = self.N * [0]  # G0
 
         if self.toehold == 0:
@@ -133,64 +143,70 @@ class IEL:
             G = self.zero_toehold_energy_rt(params)
             return jnp.array(G)
 
-        G[1] = (G_init - jnp.log(self.concentration))/RT
+        G[1] = (G_init - jnp.log(self.concentration)) / RT
 
         for positions in range(2, self.toehold + 1):  # setting the energy one by one for toehold
-            G[positions] = G[positions - 1] + G_bp/RT
+            if positions in self.invader_mm:
+                G[positions] = G[positions - 1] + G_init
+            else:
+                G[positions] = G[positions - 1] + G_bp / RT
 
         if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + G_p/RT + G_s/RT
+            G[self.toehold + 1] = G[self.toehold] + G_p / RT + G_s / RT
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                G[pos] = G[pos - 1] - G_s/RT
-                G[pos + 1] = G[pos] + G_s/RT
-            G[self.N-2] = G[self.N-3] - (params.G_init/RT)   # second to last
-            G[self.N - 1] = G[self.N - 2] - G_s/RT   # last
+                G[pos] = G[pos - 1] - G_s / RT
+                G[pos + 1] = G[pos] + G_s / RT
+            G[self.N - 2] = G[self.N - 3] - (params.G_init / RT)  # second to last
+            G[self.N - 1] = G[self.N - 2] - G_s / RT  # last
         return jnp.array(G)
 
     def zero_toehold_energy_rt(self, params):
         print("zero toehold to be implemented.")
-        G_init, G_bp, G_p, G_s,G_mm, *_ = params
+        G_init, G_bp, G_p, G_s, G_mm, *_ = params
         G = self.N * [0]  # G0
-        G[1] = -G_bp/RT
-        G[2] = G[1] + ((G_init - jnp.log(self.concentration))/RT)
+        G[1] = -G_bp / RT
+        G[2] = G[1] + ((G_init - jnp.log(self.concentration)) / RT)
 
         for pos in range(3, len(G) - 1, 2):
-            G[pos] = G[pos - 1] + G_s/RT
-            G[pos + 1] = G[pos] - G_s/RT
+            G[pos] = G[pos - 1] + G_s / RT
+            G[pos + 1] = G[pos] - G_s / RT
 
-        G[self.N-2]= G[self.N-1] - G_init/RT
-        G[self.N-1] = G[self.N - 2] + G_bp/RT
+        G[self.N - 2] = G[self.N - 1] - G_init / RT
+        G[self.N - 1] = G[self.N - 2] + G_bp / RT
         return jnp.array(G)
 
-    def double_incumbent_energy_rt(self,params):
+    def double_incumbent_energy_rt(self, params):
         print("double incumbent system to be implemented.")
-        G_init, G_bp, G_p, G_s,G_mm,G_nick, *_ = params
-        count = self.toehold+1
+        G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
+        count = self.toehold + 1
         G = self.N * [0]
 
-        G[1] = (G_init - jnp.log(self.concentration)) / RT   # initial binding
+        G[1] = (G_init - jnp.log(self.concentration)) / RT  # initial binding
 
-        for steps in range(2, self.toehold + 1):    # For toehold
-            G[steps] = G[steps - 1] + G_bp/RT
+        for steps in range(2, self.toehold + 1):  # For toehold
+            if steps in self.invader_mm:
+                G[steps] = G[steps - 1] + G_init
+            else:
+                G[steps] = G[steps - 1] + G_bp / RT
 
         # for first bp after toehold
-        G[self.toehold + 1] = G[self.toehold] + G_p/RT + G_s/RT
+        G[self.toehold + 1] = G[self.toehold] + G_p / RT + G_s / RT
 
         for steps in range(self.toehold + 2, self.N - 1, 2):
             if count in self.pm:
                 if self.pm[count] == "+":
-                    G[steps] = G[steps - 1] + (G_mm/RT - G_s/RT)
+                    G[steps] = G[steps - 1] + (G_mm / RT - G_s / RT)
                 else:
                     G[steps] = G[steps - 1] + (G_nick - G_s)
 
-                G[steps + 1] = G[steps] + G_init/RT
+                G[steps + 1] = G[steps] + G_init / RT
             else:
-                G[steps] = G[steps - 1] - params.G_s/RT
-                G[steps + 1] = G[steps] + params.G_s/RT
-            count+=1
+                G[steps] = G[steps - 1] - params.G_s / RT
+                G[steps + 1] = G[steps] + params.G_s / RT
+            count += 1
 
-        G[self.N - 2] = G[self.N - 3] - G_init/RT # second to last
-        G[self.N - 1] = G[self.N - 2] - params.G_s/RT
+        G[self.N - 2] = G[self.N - 3] - G_init / RT  # second to last
+        G[self.N - 1] = G[self.N - 2] - params.G_s / RT
 
         return jnp.array(G)
 
