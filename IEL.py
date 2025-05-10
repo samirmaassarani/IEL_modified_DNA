@@ -2,9 +2,6 @@ from collections import namedtuple
 import random
 import jax.numpy as jnp
 from jax.lax import scan
-from numpy.ma.core import count
-from scipy.linalg import toeplitz
-
 
 class IEL:
 
@@ -34,6 +31,7 @@ class IEL:
             if char == '+':
                 self.invader_mm[index] = "+"
         print(f'The mismatch and nicks on the invader strand are at {self.invader_mm}.')
+
 
     def energy_lanscape(self, params):
         # one incumbent
@@ -68,8 +66,14 @@ class IEL:
             G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                G[pos] = G[pos - 1] - params.G_s
-                G[pos + 1] = G[pos] + params.G_s
+                if (self.toehold+pos-7 in self.invader_mm or
+                        pos in self.invader_mm): #checks for mm in invader
+                    G[pos] = G[pos - 1] + params.G_mm
+                    G[pos + 1] = G[pos] + params.G_init
+                else:
+                     G[pos] = G[pos - 1] - params.G_s
+                     G[pos + 1] = G[pos] + params.G_s
+
             G[self.N - 2] = G[self.N - 3] - params.G_init  # second to last
             G[self.N - 1] = G[self.N - 2] - params.G_s  # last
         return jnp.array(G)
@@ -147,15 +151,21 @@ class IEL:
 
         for positions in range(2, self.toehold + 1):  # setting the energy one by one for toehold
             if positions in self.invader_mm:
-                G[positions] = G[positions - 1] + G_init
+                G[positions] = G[positions - 1] + G_init/RT
             else:
                 G[positions] = G[positions - 1] + G_bp / RT
 
         if self.N > self.toehold + 1:
             G[self.toehold + 1] = G[self.toehold] + G_p / RT + G_s / RT
+
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                G[pos] = G[pos - 1] - G_s / RT
-                G[pos + 1] = G[pos] + G_s / RT
+                if (self.toehold+pos-7 in self.invader_mm or
+                        pos in self.invader_mm): #checks for mm in invader
+                    G[pos] = G[pos - 1] + params.G_mm/ RT
+                    G[pos + 1] = G[pos] + params.G_init/ RT
+                else:
+                    G[pos] = G[pos - 1] - G_s / RT
+                    G[pos + 1] = G[pos] + G_s / RT
             G[self.N - 2] = G[self.N - 3] - (params.G_init / RT)  # second to last
             G[self.N - 1] = G[self.N - 2] - G_s / RT  # last
         return jnp.array(G)
