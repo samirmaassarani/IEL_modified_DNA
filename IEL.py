@@ -119,9 +119,13 @@ class IEL:
         for steps in range(self.toehold + 2, self.N - 1, 2):
             if count in self.pm:
                 if self.pm[count] == "+":
-                    G[steps] = G[steps - 1] + (G_mm - G_s)
+                    G[steps] = G[steps - 1]  + G_mm
                 else:
                     G[steps] = G[steps - 1] + (G_nick - G_s)
+                G[steps + 1] = G[steps] + G_init
+
+            elif count in self.invader_mm:
+                G[steps] = G[steps - 1] + G_mm
                 G[steps + 1] = G[steps] + G_init
             else:
                 G[steps] = G[steps - 1] - G_s
@@ -219,11 +223,14 @@ class IEL:
         for steps in range(self.toehold + 2, self.N - 1, 2):
             if count in self.pm:
                 if self.pm[count] == "+":
-                    G[steps] = G[steps - 1] + (G_mm / RT - G_s / RT)
+                    G[steps] = G[steps - 1] + G_mm / RT
                 else:
                     G[steps] = G[steps - 1] + (G_nick - G_s)
 
                 G[steps + 1] = G[steps] + G_init / RT
+            elif count in self.invader_mm:
+                G[steps] = G[steps - 1] + G_mm/ RT
+                G[steps + 1] = G[steps] + G_init/ RT
             else:
                 G[steps] = G[steps - 1] - params.G_s / RT
                 G[steps + 1] = G[steps] + params.G_s / RT
