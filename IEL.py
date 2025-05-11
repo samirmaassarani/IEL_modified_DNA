@@ -81,15 +81,22 @@ class IEL:
     def zero_toehold_energy(self, params):
         print("zero toehold to be implemented.")
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
+        count = 1 # to increment the bp in invader
         G = self.N * [0]  # G0
-        G[1] = -G_bp
-        G[2] = G[1] + G_init
+        G[1] = -G_bp #bp
+        G[2] = G[1] + G_init #intitian
+        G[3]= G[2]+ G_s
 
-        for pos in range(3, len(G) - 1, 2):
-            G[pos] = G[pos - 1] + G_s
-            G[pos + 1] = G[pos] - G_s
-        G[self.N - 2] = G[self.N - 1] - G_init
-        G[self.N - 1] = G[self.N - 2] + G_bp
+        for pos in range(4, len(G) - 1, 2):
+            if count in self.invader_mm:    #check for mm in invader
+                G[pos] = G[pos - 1] + G_mm
+                G[pos + 1] = G[pos] + G_init
+            else:
+                G[pos] = G[pos - 1] - G_s
+                G[pos + 1] = G[pos] + G_s
+            count+=1
+        G[len(G)-2] = G[len(G)-3] - G_init
+        G[len(G)-1] = G[len(G) - 2] + G_bp
         return jnp.array(G)
 
     def double_incumbent_energy(self, params):
@@ -173,17 +180,24 @@ class IEL:
     def zero_toehold_energy_rt(self, params):
         print("zero toehold to be implemented.")
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
-        G = self.N * [0]  # G0
+        count = 1  # to increment the bp in invader
+        G = self.N * [0]
         G[1] = -G_bp / RT
         G[2] = G[1] + ((G_init - jnp.log(self.concentration)) / RT)
+        G[3] = G[2] + G_s/ RT
 
-        for pos in range(3, len(G) - 1, 2):
-            G[pos] = G[pos - 1] + G_s / RT
-            G[pos + 1] = G[pos] - G_s / RT
-
-        G[self.N - 2] = G[self.N - 1] - G_init / RT
-        G[self.N - 1] = G[self.N - 2] + G_bp / RT
+        for pos in range(4, len(G) - 1, 2):
+            if count in self.invader_mm:    #check for mm in invader
+                G[pos] = G[pos - 1] + G_mm/ RT
+                G[pos + 1] = G[pos] + G_init/ RT
+            else:
+                G[pos] = G[pos - 1] - G_s/ RT
+                G[pos + 1] = G[pos] + G_s/ RT
+            count+=1
+        G[len(G)-2] = G[len(G)-3] - G_init/ RT
+        G[len(G)-1] = G[len(G) - 2] + G_bp/ RT
         return jnp.array(G)
+
 
     def double_incumbent_energy_rt(self, params):
         print("double incumbent system to be implemented.")
