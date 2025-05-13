@@ -25,12 +25,12 @@ class IEL:
                     self.pm[index] = "+"
                 else:
                     self.pm[index] = "-"
-        print(f'the number of incumbents is {self.nb_incumbents}. The mismatch and nicks are at {self.pm}.')
+        #print(f'the number of incumbents is {self.nb_incumbents}. The mismatch and nicks are at {self.pm}.')
 
         for index, char in enumerate(self.invader):  # for invader mismatches
             if char == '+':
                 self.invader_mm[index] = "+"
-        print(f'The mismatch and nicks on the invader strand are at {self.invader_mm}.')
+        #print(f'The mismatch and nicks on the invader strand are at {self.invader_mm}.')
 
 
     def energy_lanscape(self, params):
@@ -100,7 +100,7 @@ class IEL:
         return jnp.array(G)
 
     def double_incumbent_energy(self, params):
-        print("Double incumbent system to be implemented.")
+        #print("Double incumbent system to be implemented.")
         G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
         G = self.N * [0]
         count = self.toehold + 1
@@ -353,20 +353,39 @@ class IEL:
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
-    def k_eff(self, params, conc=1):
-        time = self.time_mfp(params)
-        rate = 1 / (time*1e-8)
+    def k_eff(self, params):
+        rate = 1 / (self.time_mfp(params))
         return rate
 
-    def acceleration(self, params):
-        #TODO: need to be fixed (keff for 0 is nan)
-        G_init, G_bp, G_p, G_s,G_mm, *_ = params
-        sequence = self.seq
-        model_15 = IEL(self.seq,self.invader, toehold=15, conc=1e-9)
-        model_0 = IEL(self.seq,self.invader, toehold=0, conc=1e-9)
-        keff_15=model_15.k_eff(params)
-        keff_0=model_0.k_eff(params)
-        acceleration = jnp.log10(keff_15 / keff_0)
+    def acceleration(self, params, th, th0, conc1, conc2):
+        # TODO: need to be fixed (keff for 0 is nan)
+        G_init, G_bp, G_p, G_s, G_mm, *_ = params
+
+        # Calculate reference rate
+        model_0 = IEL(self.seq, self.invader, th0, conc2)
+        keff_0 = model_0.k_eff(params)
+        if keff_0==0:
+            keff_0=0
+
+        print(f'Reference keff (toehold={th0}): {keff_0}')
+
+        # Ensure reference rate is non-zero
+        keff_ref = max(keff_0, 1e-15)
+
+
+        keff_th = []
+        for t in range(15):     #calcuate the th keff and acceleration
+            model = IEL(self.seq, self.invader, t, conc1)
+            rate = model.k_eff(params)
+            # Ensure no zero rates for log calculation
+            keff_th.append(max(rate, 1e-15))
+
+        keff_th_array = jnp.array(keff_th)
+        print(f'keff_th: {keff_th_array}')
+
+        # Calculate acceleration
+        acceleration = jnp.log10(keff_th_array / keff_ref)
+        print(f'acceleration: {acceleration}, with a size of {len(acceleration)}')
         return acceleration
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s','G_mm','G_nick', 'k_uni', 'k_bi'])
