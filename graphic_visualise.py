@@ -8,7 +8,7 @@ landscape = IEL(sequence[:15],invader, toehold=6, concentration=1e-6)
 params_srinivas = Params(9.95, -1.7, 1.5, 1,-2.0,-1, 7.5e7, 1e7)
 #Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s','G_mm','G_nick', 'k_uni', 'k_bi'])
 
-"""
+
 dG = landscape.energy_lanscape(params_srinivas)
 fig, ax = plt.subplots()
 ax.set_title("Energy landscape (paper)")
@@ -48,7 +48,7 @@ ax.plot(landscape.state, k_plus, label="$k_i^+$")
 ax.plot(landscape.state, k_minus, label="$k_i^-$")
 ax.legend()
 plt.show()
-"""
+
 
 tmfp = [IEL(sequence,invader, toehold=th,concentration=1e-6).k_eff(params_srinivas) for th in range(15)]
 fig, ax = plt.subplots()
