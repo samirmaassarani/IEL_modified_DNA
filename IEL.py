@@ -19,21 +19,20 @@ class IEL:
         self.nb_incumbents =1
         self.pm={}
         self.invader_mm={}
-        "(+) represents mismatch."
-        "(-) represents a nick."
+        self.G_assoc=4
+        "(-) represents mismatch."
+        "(+) represents a nick."
         for index, char in enumerate(self.seq):
             if char == "+" or char == '-':
                 self.nb_incumbents += 1
                 if char == "+":
-                    self.pm[index] = "+"
+                    self.pm[index] = "+" #nick
                 else:
-                    self.pm[index] = "-"
-        #print(f'the number of incumbents is {self.nb_incumbents}. The mismatch and nicks are at {self.pm}.')
+                    self.pm[index] = "-" #mm
 
         for index, char in enumerate(self.invader):  # for invader mismatches
-            if char == '+':
-                self.invader_mm[index] = "+"
-        #print(f'The mismatch and nicks on the invader strand are at {self.invader_mm}.')
+            if char == '-':
+                self.invader_mm[index] = "-"
 
 
     def energy_lanscape(self, params):
@@ -50,25 +49,27 @@ class IEL:
     def energy_paper(self, params):
         G = self.N * [0]
 
+        #implement zero toehold
         if self.toehold == 0:
             G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
-        G = self.N * [0]
         G[1] = params.G_init  # G1
 
-        for positions in range(2, self.toehold + 1):  # setting the energy one by one for toehold
+        #toehold binding energy
+        for positions in range(2, self.toehold + 1):
             if positions in self.invader_mm:  # check for mm in invader
-                G[positions] = G[positions - 1] + params.G_init
+                G[positions] = G[positions - 1] + self.G_assoc
             else:
                 G[positions] = G[positions - 1] + params.G_bp
 
+        # energy levels for full and half steps
         if self.N > self.toehold + 1:
             G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                if (self.toehold+pos-7 in self.invader_mm or
-                        pos in self.invader_mm): #checks for mm in invader
+                if self.toehold+pos-7 in self.invader_mm or (pos in self.invader_mm and self.invader_mm[pos] == "-"): #checks for mm in invader
+
                     G[pos] = G[pos - 1] + params.G_mm
                     G[pos + 1] = G[pos] + params.G_init
                 else:
@@ -168,7 +169,7 @@ class IEL:
             G[self.toehold + 1] = G[self.toehold] + G_p / RT + G_s / RT
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                if (self.toehold + pos - 7 in self.invader_mm or pos in self.invader_mm):
+                if self.toehold + pos - 7 in self.invader_mm or pos in self.invader_mm:
                     G[pos] = G[pos - 1] + params.G_mm / RT
                     G[pos + 1] = G[pos] + params.G_init / RT
                 else:
@@ -251,43 +252,6 @@ class IEL:
         if self.toehold > 0:
             k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
             k_minus = k_minus.at[0].set(params.k_bi * self.concentration * jnp.exp(energy_diff[0]))
-        else:
-            k_plus = k_plus.at[0].set(0.0)
-            k_minus = k_minus.at[0].set(0.0)
-
-        # Irreversible completion (if branch migration exists)
-        if self.N > self.toehold + 1:
-            k_plus = k_plus.at[-1].set(params.k_uni)
-            k_minus = k_minus.at[-1].set(0.0)
-
-        # Pad with zeros for boundary conditions
-        k_plus = jnp.pad(k_plus, (0, 1))  # Add zero at end
-        k_minus = jnp.pad(k_minus, (1, 0))  # Add zero at start
-
-        return k_plus, k_minus
-
-    def new_metropolis(self, params):
-        dG = self.energy_lanscape_rt(params)  # RT-scaled energies
-        energy_diff = dG[1:] - dG[:-1]  # ΔG between states
-
-        # Base rates (unimolecular for all transitions)
-        k_plus = jnp.full(self.N - 1, params.k_uni)
-        k_minus = jnp.full(self.N - 1, params.k_uni)
-
-        # Metropolis rule (vectorized)
-        k_plus = jnp.where(energy_diff > 0, k_plus * jnp.exp(-energy_diff), k_plus)
-        k_minus = jnp.where(energy_diff < 0, k_minus * jnp.exp(energy_diff), k_minus)
-
-        # Bimolecular initiation (if toehold exists)
-        if self.toehold > 0:
-            # 1:1 ratio implementation - use concentration² for initial binding rate
-            # This models equal concentrations of gates and invaders
-            k_plus = k_plus.at[0].set(params.k_bi * self.concentration * self.concentration)
-
-            # Use capped backward rate to avoid numerical issues
-            max_energy = 25.0
-            safe_energy = min(float(energy_diff[0]), max_energy)
-            k_minus = k_minus.at[0].set(params.k_uni * 1e5)
         else:
             k_plus = k_plus.at[0].set(0.0)
             k_minus = k_minus.at[0].set(0.0)
