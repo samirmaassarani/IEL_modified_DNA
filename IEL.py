@@ -17,124 +17,184 @@ class IEL:
         self.seq=Sequence
         self.invader=Invader
         self.nb_incumbents =1
-        self.pm={}
+        self.sequence_mm={}
         self.invader_mm={}
-        self.G_assoc=4
+        self.G_assoc=8
+        self.G_after_mm=5
+        self.G_nick=-2
         "(-) represents mismatch."
         "(+) represents a nick."
-        for index, char in enumerate(self.seq):
+
+        for index, char in enumerate(self.seq):     # for sequence mismatches or nick
             if char == "+" or char == '-':
                 self.nb_incumbents += 1
                 if char == "+":
-                    self.pm[index] = "+" #nick
+                    self.sequence_mm[index] = "+" #nick
                 else:
-                    self.pm[index] = "-" #mm
+                    self.sequence_mm[index] = "-" #mm
 
         for index, char in enumerate(self.invader):  # for invader mismatches
             if char == '-':
-                self.invader_mm[index] = "-"
+                self.invader_mm[index] = "-" #mm
 
 
     def energy_lanscape(self, params):
-        # one incumbent
+
         if self.nb_incumbents == 1:
             G = self.energy_paper(params)
             return jnp.array(G)
 
-        # two incumbents
-        else :
+        #two incumbents
+        else:
             G = self.double_incumbent_energy(params)
         return jnp.array(G)
 
     def energy_paper(self, params):
+        #TODO: fix self.toehold+pos-7
+        missmatch = False
         G = self.N * [0]
 
-        #implement zero toehold
+        'implement zero toehold'
         if self.toehold == 0:
             G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
         G[1] = params.G_init  # G1
 
-        #toehold binding energy
+        'toehold binding energy'
         for positions in range(2, self.toehold + 1):
             if positions in self.invader_mm:  # check for mm in invader
                 G[positions] = G[positions - 1] + self.G_assoc
             else:
                 G[positions] = G[positions - 1] + params.G_bp
 
-        # energy levels for full and half steps
+        'energy levels for full and half steps'
         if self.N > self.toehold + 1:
             G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                if self.toehold+pos-7 in self.invader_mm or (pos in self.invader_mm and self.invader_mm[pos] == "-"): #checks for mm in invader
-
+                'check for mm in invader'
+                if self.toehold+pos-7 in self.invader_mm :
+                    missmatch = True
                     G[pos] = G[pos - 1] + params.G_mm
+                    G[pos + 1] = G[pos] + self.G_assoc
+
+                    'check for mm in sequence'
+                elif pos in self.sequence_mm and self.sequence_mm[pos] == "-":
+                    missmatch = True
+                    G[pos] = G[pos - 1] + params.G_mm
+                    G[pos + 1] = G[pos] + self.G_after_mm
+
+                    'check for nick in sequence'
+                elif pos in self.sequence_mm and self.sequence_mm[pos] == "+":
+                    missmatch = True
+                    G[pos] = G[pos - 1] + self.G_nick
                     G[pos + 1] = G[pos] + params.G_init
+
+                    'no mm or nicks'
                 else:
                      G[pos] = G[pos - 1] - params.G_s
                      G[pos + 1] = G[pos] + params.G_s
 
-            G[self.N - 2] = G[self.N - 3] - params.G_init  # second to last
-            G[self.N - 1] = G[self.N - 2] - params.G_s  # last
-        return jnp.array(G)
+            'for decoupling at the end'
+            if not missmatch:
+                G[len(G) - 2] = G[len(G) - 3] - params.G_init
+            else:
+                G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
+            G[len(G) - 1] = G[len(G) - 2] + params.G_bp
+            return jnp.array(G)
 
     def zero_toehold_energy(self, params):
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
         count = 1 # to increment the bp in invader
+        missmatch=False
         G = self.N * [0]  # G0
         G[1] = -G_bp #bp
         G[2] = G[1] + G_init #intitian
         G[3]= G[2]+ G_s
 
+        'energy levels for full and half steps'
         for pos in range(4, len(G) - 1, 2):
             if count in self.invader_mm:    #check for mm in invader
                 G[pos] = G[pos - 1] + G_mm
                 G[pos + 1] = G[pos] + G_init
+
+                'check for nick in sequence'
+            elif count in self.sequence_mm and self.sequence_mm[count]=="+":
+                missmatch=True
+                G[pos] = G[pos - 1] + self.G_nick
+                G[pos + 1] = G[pos] + self.G_assoc
+
+                'check for mm in sequence'
+            elif count in self.sequence_mm and self.sequence_mm[count]=="-":
+                missmatch = True
+                G[pos] = G[pos - 1] + G_mm
+                G[pos + 1] = G[pos] + self.G_after_mm
+
+                'no mm or nicks'
             else:
                 G[pos] = G[pos - 1] - G_s
                 G[pos + 1] = G[pos] + G_s
             count+=1
-        G[len(G)-2] = G[len(G)-3] - G_init
+
+        'for decoupling at the end'
+        if not missmatch:
+            G[len(G)-2] = G[len(G)-3] - G_init
+        else:
+            G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
         G[len(G)-1] = G[len(G) - 2] + G_bp
         return jnp.array(G)
 
     def double_incumbent_energy(self, params):
-        #print("Double incumbent system to be implemented.")
         G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
         G = self.N * [0]
         count = self.toehold + 1
-
+        missmatch= False
         G[1] = G_init  # initial binding
 
-        for steps in range(2, self.toehold + 1):  # for toehold
+        'toehold binding energy'
+        for steps in range(2, self.toehold + 1):
             if steps in self.invader_mm:
-                G[steps] = G[steps - 1] + G_init
+                G[steps] = G[steps - 1] + self.G_after_mm #applies extra G for mm
             else:
                 G[steps] = G[steps - 1] + G_bp
 
-        # for first bp after toehold
+        'for first bp after toehold'
         G[self.toehold + 1] = G[self.toehold] + G_p + G_s
 
+        'energy levels for full and half steps'
         for steps in range(self.toehold + 2, self.N - 1, 2):
-            if count in self.pm:
-                if self.pm[count] == "+":
-                    G[steps] = G[steps - 1]  + G_mm
-                else:
-                    G[steps] = G[steps - 1] + (G_nick - G_s)
-                G[steps + 1] = G[steps] + G_init
-
-            elif count in self.invader_mm:
+            'check for mm in invader'
+            if  count in self.invader_mm:
+                missmatch = True
                 G[steps] = G[steps - 1] + G_mm
                 G[steps + 1] = G[steps] + G_init
+
+                'check for mm or nick in sequence'
+            elif count in self.sequence_mm:
+                missmatch = True
+                if self.sequence_mm[count] == "-":
+                    'check for mm in sequence'
+                    G[steps] = G[steps - 1] + G_mm
+                    G[steps + 1] = G[steps] + self.G_after_mm
+
+                else:
+                    'check for nick in sequence'
+                    G[steps] = G[steps - 1] + (G_nick - G_s)
+                    G[steps + 1] = G[steps] + self.G_assoc
+
+                'no mm or nicks'
             else:
                 G[steps] = G[steps - 1] - G_s
                 G[steps + 1] = G[steps] + G_s
             count += 1
 
-        G[self.N - 2] = G[self.N - 3] - G_init  # second to last
-        G[self.N - 1] = G[self.N - 2] - G_s
+        'for decoupling at the end'
+        if not missmatch:
+            G[len(G) - 2] = G[len(G) - 3] - params.G_init
+        else:
+            G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
+        G[len(G) - 1] = G[len(G) - 2] + params.G_bp
         return jnp.array(G)
 
     # implements the energy landscape with RT
@@ -150,90 +210,152 @@ class IEL:
         return jnp.array(G)
 
     def energy_paper_rt(self, params):
-        G_init, G_bp, G_p, G_s, G_mm, *_ = params
-        G = self.N * [0]  # G0
+        # TODO: fix self.toehold+pos-7
+        missmatch = False
+        G = self.N * [0]
 
+        'implement zero toehold'
         if self.toehold == 0:
-            G = self.zero_toehold_energy_rt(params)
+            G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
-        G[1] = (G_init - jnp.log(self.concentration)) / RT
+        G[1] = (params.G_init - jnp.log(self.concentration)) / RT  # initial binding
 
-        for positions in range(2, self.toehold + 1):  # setting the energy one by one for toehold
-            if positions in self.invader_mm:
-                G[positions] = G[positions - 1] + G_init / RT  # Added RT division
+        'toehold binding energy'
+        for positions in range(2, self.toehold + 1):
+            if positions in self.invader_mm:  # check for mm in invader
+                G[positions] = G[positions - 1] + self.G_assoc/RT
             else:
-                G[positions] = G[positions - 1] + G_bp / RT
+                G[positions] = G[positions - 1] + params.G_bp/RT
 
+        'energy levels for full and half steps'
         if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + G_p / RT + G_s / RT
+            G[self.toehold + 1] = G[self.toehold] + params.G_p/RT   + params.G_s/RT
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                if self.toehold + pos - 7 in self.invader_mm or pos in self.invader_mm:
-                    G[pos] = G[pos - 1] + params.G_mm / RT
-                    G[pos + 1] = G[pos] + params.G_init / RT
+                'check for mm in invader'
+                if self.toehold + pos - 7 in self.invader_mm:
+                    missmatch = True
+                    G[pos] = G[pos - 1] + params.G_mm/RT
+                    G[pos + 1] = G[pos] + self.G_assoc/RT
+
+                    'check for mm in sequence'
+                elif pos in self.sequence_mm and self.sequence_mm[pos] == "-":
+                    missmatch = True
+                    G[pos] = G[pos - 1] + params.G_mm/RT
+                    G[pos + 1] = G[pos] + self.G_after_mm/RT
+
+                    'check for nick in sequence'
+                elif pos in self.sequence_mm and self.sequence_mm[pos] == "+":
+                    missmatch = True
+                    G[pos] = G[pos - 1] + self.G_nick/RT
+                    G[pos + 1] = G[pos] + params.G_init/RT
+
+                    'no mm or nicks'
                 else:
-                    G[pos] = G[pos - 1] - G_s / RT
-                    G[pos + 1] = G[pos] + G_s / RT
-            G[self.N - 2] = G[self.N - 3] - (params.G_init / RT)  # second to last
-            G[self.N - 1] = G[self.N - 2] - G_s / RT  # last
-        return jnp.array(G)
+                    G[pos] = G[pos - 1] - params.G_s/RT
+                    G[pos + 1] = G[pos] + params.G_s/RT
+
+            'for decoupling at the end'
+            if not missmatch:
+                G[len(G) - 2] = G[len(G) - 3] - params.G_init/RT
+            else:
+                G[len(G) - 2] = G[len(G) - 3] - self.G_assoc/RT
+            G[len(G) - 1] = G[len(G) - 2] + params.G_bp/RT
+            return jnp.array(G)
 
     def zero_toehold_energy_rt(self, params):
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
+        missmatch = False
         count = 1  # to increment the bp in invader
         G = self.N * [0]
         G[1] = -G_bp / RT
         G[2] = G[1] + ((G_init - jnp.log(self.concentration)) / RT)
-        G[3] = G[2] + G_s/ RT
+        G[3] = G[2] + G_s /RT
 
+        'energy levels for full and half steps'
         for pos in range(4, len(G) - 1, 2):
-            if count in self.invader_mm:    #check for mm in invader
-                G[pos] = G[pos - 1] + G_mm/ RT
-                G[pos + 1] = G[pos] + G_init/ RT
+            if count in self.invader_mm:  # check for mm in invader
+                G[pos] = G[pos - 1] + G_mm/RT
+                G[pos + 1] = G[pos] + G_init/RT
+
+                'check for nick in sequence'
+            elif count in self.sequence_mm and self.sequence_mm[count] == "+":
+                missmatch = True
+                G[pos] = G[pos - 1] + self.G_nick/RT
+                G[pos + 1] = G[pos] + self.G_assoc/RT
+
+                'check for mm in sequence'
+            elif count in self.sequence_mm and self.sequence_mm[count] == "-":
+                missmatch = True
+                G[pos] = G[pos - 1] + G_mm/RT
+                G[pos + 1] = G[pos] + self.G_after_mm/RT
+
+                'no mm or nicks'
             else:
-                G[pos] = G[pos - 1] - G_s/ RT
-                G[pos + 1] = G[pos] + G_s/ RT
-            count+=1
-        G[len(G)-2] = G[len(G)-3] - G_init/ RT
-        G[len(G)-1] = G[len(G) - 2] + G_bp/ RT
+                G[pos] = G[pos - 1] - G_s/RT
+                G[pos + 1] = G[pos] + G_s/RT
+            count += 1
+
+        'for decoupling at the end'
+        if not missmatch:
+            G[len(G) - 2] = G[len(G) - 3] - G_init/RT
+        else:
+            G[len(G) - 2] = G[len(G) - 3] - self.G_assoc/RT
+        G[len(G) - 1] = G[len(G) - 2] + G_bp/RT
         return jnp.array(G)
 
     def double_incumbent_energy_rt(self, params):
         G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
+        missmatch=False
         count = self.toehold + 1
         G = self.N * [0]
 
         G[1] = (G_init - jnp.log(self.concentration)) / RT  # initial binding
 
-        for steps in range(2, self.toehold + 1):  # For toehold
-            if steps in self.invader_mm:
-                G[steps] = G[steps - 1] + G_init / RT  # Added RT division
+        'toehold binding energy'
+        for th in range(2, self.toehold + 1):
+            if th in self.invader_mm:
+                G[th] = G[th - 1] + self.G_after_mm/ RT  # applies extra G for mm
             else:
-                G[steps] = G[steps - 1] + G_bp / RT
+                G[th] = G[th - 1] + G_bp/ RT
 
-        # for first bp after toehold
-        G[self.toehold + 1] = G[self.toehold] + G_p / RT + G_s / RT
+        'for first bp after toehold'
+        G[self.toehold + 1] = G[self.toehold] + G_p/ RT + G_s/ RT
 
+        'energy levels for full and half steps'
         for steps in range(self.toehold + 2, self.N - 1, 2):
-            if count in self.pm:
-                if self.pm[count] == "+":
-                    G[steps] = G[steps - 1] + G_mm / RT
-                else:
-                    G[steps] = G[steps - 1] + (G_nick - G_s) / RT  # Added RT division
+            'check for mm in invader'
+            if count in self.invader_mm:
+                missmatch = True
+                G[steps] = G[steps - 1] + G_mm/ RT
+                G[steps + 1] = G[steps] + G_init/ RT
 
-                G[steps + 1] = G[steps] + G_init / RT
-            elif count in self.invader_mm:
-                G[steps] = G[steps - 1] + G_mm / RT
-                G[steps + 1] = G[steps] + G_init / RT
+                'check for mm or nick in sequence'
+            elif count in self.sequence_mm:
+                missmatch = True
+                if self.sequence_mm[count] == "-":
+                    'check for mm in sequence'
+                    G[steps] = G[steps - 1] + G_mm/ RT
+                    G[steps + 1] = G[steps] + self.G_after_mm/ RT
+
+                else:
+                    'check for nick in sequence'
+                    G[steps] = G[steps - 1] + (G_nick/ RT - G_s/ RT)
+                    G[steps + 1] = G[steps] + self.G_assoc/ RT
+
+                'no mm or nicks'
             else:
-                G[steps] = G[steps - 1] - G_s / RT
-                G[steps + 1] = G[steps] + G_s / RT
+                G[steps] = G[steps - 1] - G_s/ RT
+                G[steps + 1] = G[steps] + G_s/ RT
             count += 1
 
-        G[self.N - 2] = G[self.N - 3] - G_init / RT  # second to last
-        G[self.N - 1] = G[self.N - 2] - G_s / RT
-
+        'for decoupling at the end'
+        if not missmatch:
+            G[len(G) - 2] = G[len(G) - 3] - params.G_init/ RT
+        else:
+            G[len(G) - 2] = G[len(G) - 3] - self.G_assoc/ RT
+        G[len(G) - 1] = G[len(G) - 2] + params.G_bp/ RT
         return jnp.array(G)
 
     def metropolis(self, params):
