@@ -2,9 +2,7 @@ from collections import namedtuple
 import random
 import jax.numpy as jnp
 from jax.lax import scan
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
+
 
 class IEL:
 
@@ -20,7 +18,7 @@ class IEL:
         self.sequence_mm={}
         self.invader_mm={}
         self.G_assoc=8
-        self.G_after_mm=5
+        self.G_after_mm=2
         self.G_nick=-2
         "(-) represents mismatch."
         "(+) represents a nick."
@@ -50,8 +48,8 @@ class IEL:
         return jnp.array(G)
 
     def energy_paper(self, params):
-        #TODO: fix self.toehold+pos-7
         missmatch = False
+        counter = self.toehold + 1
         G = self.N * [0]
 
         'implement zero toehold'
@@ -59,7 +57,7 @@ class IEL:
             G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
-        G[1] = params.G_init  # G1
+        G[1] = params.G_init   # initial binding
 
         'toehold binding energy'
         for positions in range(2, self.toehold + 1):
@@ -70,31 +68,38 @@ class IEL:
 
         'energy levels for full and half steps'
         if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s
+            G[self.toehold + 1] = G[self.toehold] + params.G_p  + params.G_s
+
+            print(f'invader_mm= {self.invader_mm}')
+            print(f'sewuence_mm={self.sequence_mm}')
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                'check for mm in invader'
-                if self.toehold+pos-7 in self.invader_mm :
-                    missmatch = True
-                    G[pos] = G[pos - 1] + params.G_mm
-                    G[pos + 1] = G[pos] + self.G_assoc
 
-                    'check for mm in sequence'
-                elif pos in self.sequence_mm and self.sequence_mm[pos] == "-":
+                'check for mm in invader'
+                if counter in self.invader_mm:
                     missmatch = True
                     G[pos] = G[pos - 1] + params.G_mm
                     G[pos + 1] = G[pos] + self.G_after_mm
 
-                    'check for nick in sequence'
-                elif pos in self.sequence_mm and self.sequence_mm[pos] == "+":
+                    'check for mm or nick in sequence'
+                elif counter in self.sequence_mm:
                     missmatch = True
-                    G[pos] = G[pos - 1] + self.G_nick
-                    G[pos + 1] = G[pos] + params.G_init
 
-                    'no mm or nicks'
+                    'check for mm in sequence'
+                    if self.sequence_mm[counter] == "-":
+                        G[pos] = G[pos - 1] + params.G_mm
+                        G[pos + 1] = G[pos] + self.G_after_mm
+
+                    else:
+                        'check for nick in sequence'
+                        missmatch = True
+                        G[pos] = G[pos - 1] + (self.G_nick - params.G_s)
+                        G[pos + 1] = G[pos] + params.G_init
                 else:
-                     G[pos] = G[pos - 1] - params.G_s
-                     G[pos + 1] = G[pos] + params.G_s
+                    'no mm or nicks'
+                    G[pos] = G[pos - 1] - params.G_s
+                    G[pos + 1] = G[pos] + params.G_s
+                counter += 1
 
             'for decoupling at the end'
             if not missmatch:
@@ -103,7 +108,6 @@ class IEL:
                 G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
             G[len(G) - 1] = G[len(G) - 2] + params.G_bp
             return jnp.array(G)
-
     def zero_toehold_energy(self, params):
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
         count = 1 # to increment the bp in invader
@@ -199,19 +203,19 @@ class IEL:
 
     # implements the energy landscape with RT
     def energy_lanscape_rt(self, params):
-        # one incumbent
+        """implement the single incumbent system"""
         if self.nb_incumbents == 1:
             G = self.energy_paper_rt(params)
             return jnp.array(G)
 
-        # two incumbents
+            "implement the double incumbent system"
         elif self.nb_incumbents >= 2:
             G = self.double_incumbent_energy_rt(params)
-        return jnp.array(G)
+            return jnp.array(G)
 
     def energy_paper_rt(self, params):
-        # TODO: fix self.toehold+pos-7
         missmatch = False
+        counter= self.toehold+1
         G = self.N * [0]
 
         'implement zero toehold'
@@ -232,29 +236,37 @@ class IEL:
         if self.N > self.toehold + 1:
             G[self.toehold + 1] = G[self.toehold] + params.G_p/RT   + params.G_s/RT
 
+
+            print(f'invader_mm= {self.invader_mm}')
+            print(f'sewuence_mm={self.sequence_mm}')
+
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                'check for mm in invader'
-                if self.toehold + pos - 7 in self.invader_mm:
+
+                if counter in self.invader_mm:
+                    'check for mm in Invader sequence'
                     missmatch = True
                     G[pos] = G[pos - 1] + params.G_mm/RT
-                    G[pos + 1] = G[pos] + self.G_assoc/RT
+                    G[pos + 1] = G[pos] + self.G_after_mm  /RT
+
+                    'check for mm or nick in sequence'
+                elif counter in self.sequence_mm:
+                    missmatch = True
 
                     'check for mm in sequence'
-                elif pos in self.sequence_mm and self.sequence_mm[pos] == "-":
-                    missmatch = True
-                    G[pos] = G[pos - 1] + params.G_mm/RT
-                    G[pos + 1] = G[pos] + self.G_after_mm/RT
+                    if self.sequence_mm[counter] == "-":
+                        G[pos] = G[pos - 1] + params.G_mm/RT
+                        G[pos+1] = G[pos] + self.G_after_mm/RT
 
-                    'check for nick in sequence'
-                elif pos in self.sequence_mm and self.sequence_mm[pos] == "+":
-                    missmatch = True
-                    G[pos] = G[pos - 1] + self.G_nick/RT
-                    G[pos + 1] = G[pos] + params.G_init/RT
-
-                    'no mm or nicks'
+                    else:
+                        'check for nick in sequence'
+                        missmatch = True
+                        G[pos] = G[pos - 1] + self.G_nick / RT - params.G_s/RT
+                        G[pos + 1] = G[pos] + params.G_init / RT
                 else:
+                    'no mm or nicks'
                     G[pos] = G[pos - 1] - params.G_s/RT
                     G[pos + 1] = G[pos] + params.G_s/RT
+                counter+=1
 
             'for decoupling at the end'
             if not missmatch:
@@ -362,7 +374,7 @@ class IEL:
         dG = self.energy_lanscape_rt(params)  # RT-scaled energies
         energy_diff = dG[1:] - dG[:-1]  # ΔG between states
 
-        # Base rates (unimolecular for all transitions)
+        # Base rates (uni-molecular for all transitions)
         k_plus = jnp.full(self.N - 1, params.k_uni)
         k_minus = jnp.full(self.N - 1, params.k_uni)
 
@@ -370,14 +382,13 @@ class IEL:
         k_plus = jnp.where(energy_diff > 0, k_plus * jnp.exp(-energy_diff), k_plus)
         k_minus = jnp.where(energy_diff < 0, k_minus * jnp.exp(energy_diff), k_minus)
 
-        # Bimolecular initiation (if toehold exists)
+        # Bi-molecular initiation (if toehold exists)
         if self.toehold > 0:
             k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
             k_minus = k_minus.at[0].set(params.k_bi * self.concentration * jnp.exp(energy_diff[0]))
         else:
-            k_plus = k_plus.at[0].set(0.0)
-            k_minus = k_minus.at[0].set(0.0)
-
+            k_plus = k_plus.at[0].set(params.k_bi * self.concentration * 1e-9)  # 1% efficiency
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
         # Irreversible completion (if branch migration exists)
         if self.N > self.toehold + 1:
             k_plus = k_plus.at[-1].set(params.k_uni)
@@ -465,32 +476,35 @@ class IEL:
         return ps.sum()
 
     def k_eff(self, params):
-        rate = 1 / (self.time_mfp(params)*self.concentration)
+        mfpt = self.time_mfp(params)
+        print(f"Mean first passage time: {mfpt}")
+        rate = 1 / (mfpt * self.concentration)
+        print(f"Calculated rate: {rate}")
         return rate
 
-    def acceleration(self, params, th, th0, conc1, conc2):
-        G_init, G_bp, G_p, G_s, G_mm, *_ = params
-        # Calculate reference rate
-        model_0 = IEL(self.seq, self.invader, th0, conc2)
+    def acceleration(self, params, conc1, conc2):
+        # Calculate reference rate for toehold=0
+        model_0 = IEL(self.seq, self.invader, 0, conc2)
         keff_0 = model_0.k_eff(params)
-        if keff_0==0:
-            keff_0=0
 
         # Ensure reference rate is non-zero
-        keff_ref = keff_0 if keff_0 > 0 else 1e-15
+        keff_ref = max(keff_0, 1e-15)
+        print(f'keff_ref={keff_ref}')
 
+        # Calculate keff for each toehold length
         keff_th = []
-        for t in range(15):     #calcuate the th keff and acceleration
+        for t in range(15):
             model = IEL(self.seq, self.invader, t, conc1)
             rate = model.k_eff(params)
-            # Ensure no zero rates for log calculation
-            keff_th.append(max(rate, 1e-15))
-        keff_th_array= jnp.array(keff_th)
+            keff_th.append(rate)
+
+        keff_th_array = jnp.array(keff_th)
         print(f'keff_th={keff_th_array}')
-        print(f'keff_ref={keff_ref}')
+
         # Calculate acceleration
         acceleration = jnp.log10(keff_th_array / keff_ref)
         print(f'acceleration:{acceleration}')
+
         return acceleration
 
     def nearest_neighbour(self, dH, dS, temperature=25):
@@ -511,7 +525,7 @@ class IEL:
             if i in self.invader_mm:  # check for mm in invader
                 G[i] = G[i - 1] + params.G_mm / RT
             else:
-                # Get the dinucleotide at this position
+                # Get the di-nucleotide at this position
                 dinucleotide = self.seq[i - 2:i]
                 complement = self.get_complement(dinucleotide)
                 key = f"{dinucleotide}/{complement}"
@@ -560,5 +574,5 @@ class IEL:
 
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s','G_mm','G_nick', 'k_uni', 'k_bi'])
-#params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 2.0,7.5e7, 3e6)
+#params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 2.0,7.5e7, 3e6) original
 RT = 0.590
