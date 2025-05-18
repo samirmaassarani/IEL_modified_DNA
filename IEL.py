@@ -1,12 +1,12 @@
 from collections import namedtuple
 import random
 import jax.numpy as jnp
+from fontTools.ttLib.tables.S_I_N_G_ import table_S_I_N_G_
 from jax.lax import scan
-
 
 class IEL:
 
-    def __init__(self,Sequence,Invader,toehold,concentration):
+    def __init__(self,Sequence,Incumbent,Invader,toehold,concentration):
         self.state = jnp.concatenate([jnp.arange(0, toehold + 1),
                                       jnp.arange(toehold + .5, len(Sequence) + .5, .5)])
         self.N =len(self.state)
@@ -20,6 +20,9 @@ class IEL:
         self.G_assoc=8
         self.G_after_mm=2
         self.G_nick=-2
+        self.test={}
+        self.inc=Incumbent
+        self.mm_array=[]
         "(-) represents mismatch."
         "(+) represents a nick."
 
@@ -34,6 +37,103 @@ class IEL:
         for index, char in enumerate(self.invader):  # for invader mismatches
             if char == '-':
                 self.invader_mm[index] = "-" #mm
+
+    def sequence_analyser(self, length,toehold):
+        # More efficient cleaning - O(n) instead of O(n²)
+        cleaned_incumbent = self.inc.replace("+", "").replace("-", "")
+
+        # Track positions of special characters if needed
+        for index, char in enumerate(self.inc):
+            if char in "+-":
+                self.test[index] = char
+
+        # Truncate to desired length
+        self.inc = cleaned_incumbent[:length]
+        self.state = jnp.concatenate([jnp.arange(0, toehold + 1),
+                                      jnp.arange(toehold + .5, len(cleaned_incumbent) + .5, .5)])
+        self.N =len(self.state)
+
+        # Helper function to avoid code duplication
+        def check_complement(seq_char, comp_char):
+            complements = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G'}
+            return complements.get(seq_char) == comp_char
+
+        # Single pass to check both incumbent and invader
+        for i in range(length):
+            seq_char = self.seq[i]
+
+            # Check incumbent mismatch
+            if not check_complement(seq_char, self.inc[i]):
+                self.test[i] = f'{seq_char}-{self.inc[i]}'
+
+            # Check invader mismatch
+            elif not check_complement(seq_char, self.invader[i]):
+                self.test[i] = f'{seq_char}-{self.invader[i]}'
+
+        # Only sort if order matters for your use case
+        self.test = dict(sorted(self.test.items()))
+        return self.test
+
+    def new_energy(self, params, length,mm,toehold):
+
+        self.test = self.sequence_analyser(length,toehold)
+        counter = self.toehold + 1
+        G = self.N * [0]
+        if self.toehold == 0:
+            G = self.zero_toehold_energy(params)
+            return jnp.array(G)
+
+
+        "initiation"
+        if 1 in self.test:
+            mismatch_pair = self.test[1]  # e.g., 'C-A'
+            if mismatch_pair in mm:
+                energy_penalty = mm[mismatch_pair]
+                G[1] = energy_penalty  # Store the energy penalty
+        else:
+            G[1] = params.G_init   # initial binding
+
+        'toehold binding energy'
+        for positions in range(2, self.toehold + 1):
+            if positions in self.test:  # Check if there's a mismatch at position i
+                mismatch_pair = self.test[positions]  # e.g., 'C-A'
+                if mismatch_pair in mm:
+                    energy_penalty = mm[mismatch_pair]
+                    G[positions] = G[positions-1] + energy_penalty  # Store the energy penalty
+                else:
+                    G[positions] = G[positions - 1] + params.G_nick
+            else:
+                G[positions] = G[positions - 1] + params.G_bp
+
+        'energy levels for full and half steps'
+        if self.N > self.toehold + 1:
+            G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s
+            print(self.test)
+            for pos in range(self.toehold + 2, self.N - 2, 2):
+                if counter in self.test:  # Check if there's a mismatch at position i
+                    mismatch_pair = self.test[counter]  # e.g., 'C-A'
+                    if mismatch_pair in mm:
+                        energy_penalty = mm[mismatch_pair]
+                        G[pos] = G[pos - 1] + energy_penalty  # Store the energy penalty
+                        G[pos+1] = G[pos] + self.G_after_mm
+                    else:
+                        G[pos] = G[pos - 1] + (self.G_nick - params.G_s)
+                        G[pos + 1] = G[pos] + params.G_init
+                else:
+                    G[pos] = G[pos - 1] - params.G_s
+                    G[pos + 1] = G[pos] + params.G_s
+                counter += 1
+            'for decoupling at the end'
+            G[len(G) - 2] = G[len(G) - 3] - params.G_init
+            G[len(G) - 1] = G[len(G) - 2] + params.G_bp
+
+        return jnp.array(G)
+
+
+
+
+
+
 
 
     def energy_lanscape(self, params):
@@ -70,11 +170,7 @@ class IEL:
         if self.N > self.toehold + 1:
             G[self.toehold + 1] = G[self.toehold] + params.G_p  + params.G_s
 
-            print(f'invader_mm= {self.invader_mm}')
-            print(f'sewuence_mm={self.sequence_mm}')
-
             for pos in range(self.toehold + 2, self.N - 2, 2):
-
                 'check for mm in invader'
                 if counter in self.invader_mm:
                     missmatch = True
@@ -108,6 +204,7 @@ class IEL:
                 G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
             G[len(G) - 1] = G[len(G) - 2] + params.G_bp
             return jnp.array(G)
+
     def zero_toehold_energy(self, params):
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
         count = 1 # to increment the bp in invader
