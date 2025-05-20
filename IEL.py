@@ -64,7 +64,7 @@ class IEL:
     def energy(self, params,mm_energy):
         self.alterations, self.N, self.state=self.sequence_analyser()
         nick_case=False
-        Target_BP=self.toehold+2
+        Target_BP=self.toehold+1
 
         G = self.N * [0]
         if self.toehold == 0:
@@ -82,6 +82,7 @@ class IEL:
 
         'toehold binding energy'
         for positions in range(2, self.toehold + 1):
+            print(positions)
             'Check if there is a mismatch at position'
             if positions in self.alterations:
                 mismatch_pair = self.alterations[positions]
@@ -98,7 +99,7 @@ class IEL:
             G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s #first half step after toehold
 
             for pos in range(self.toehold + 2, self.N - 2, 2): #sets energy levels for all steps
-
+                print(pos,Target_BP)
                 if Target_BP in self.alterations:  # Check if there's a mismatch at position i
                     print(f'in alter {Target_BP}, at {Target_BP}')
                     mismatch_pair = self.alterations[Target_BP]
@@ -131,7 +132,7 @@ class IEL:
     def zero_toehold_energy(self, params,mm_energy):
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
         nick_case=False
-        Target_BP = self.toehold + 2
+        Target_BP = self.toehold + 1
         G = self.N * [0]  # G0
         G[1] = G_bp #bp
         G[2] = G[1] + G_init #intitian
@@ -171,7 +172,7 @@ class IEL:
     def energy_rt(self, params,mm_energy):
 
         self.alterations, self.N, self.state=self.sequence_analyser()
-        Target_BP = self.toehold + 2
+        Target_BP = self.toehold + 1
         nick_case=False
 
         G = self.N * [0]
@@ -237,7 +238,7 @@ class IEL:
     def zero_toehold_energy_rt(self, params,mm_energy):
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
         nick_case = False
-        Target_BP = self.toehold + 2
+        Target_BP = self.toehold + 1
         G = self.N * [0]
         G[1] = G_bp / RT
         G[2] = G[1] + ((G_init - jnp.log(self.concentration)) / RT)
