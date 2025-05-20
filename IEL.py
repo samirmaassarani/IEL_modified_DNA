@@ -17,18 +17,26 @@ class IEL:
         self.invader=Invader
         self.inc=Incumbent
         self.G_assoc=9
-        self.G_nick=-2
+        self.G_gap=2.0
         self.alterations={}
 
     def sequence_analyser(self):
 
-        #Track positions of nick in incumbent
+        #Track positions of nick and gaps in incumbent
         for index, char in enumerate(self.inc):
+            if char == "+":
+                self.alterations[index+self.toehold] = char
+            elif char =="-":
+                self.alterations[index + self.toehold] = char
+
+
+        #Track positions of nick and gaps in incumbent
+        for index, char in enumerate(self.invader):
             if char == "-":
                 self.alterations[index+self.toehold] = char
-                print(self.alterations)
 
-        cleaned_incumbent = self.inc.replace("-", "")
+
+        cleaned_incumbent = self.inc.replace("+", "")
         cleaned_incumbent=cleaned_incumbent[:self.length]
         "to get the length of desired sequence"
         self.inc = cleaned_incumbent[:self.length]
@@ -82,7 +90,6 @@ class IEL:
 
         'toehold binding energy'
         for positions in range(2, self.toehold + 1):
-            print(positions)
             'Check if there is a mismatch at position'
             if positions in self.alterations:
                 mismatch_pair = self.alterations[positions]
@@ -99,20 +106,25 @@ class IEL:
             G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s #first half step after toehold
 
             for pos in range(self.toehold + 2, self.N - 2, 2): #sets energy levels for all steps
-                print(pos,Target_BP)
                 if Target_BP in self.alterations:  # Check if there's a mismatch at position i
-                    print(f'in alter {Target_BP}, at {Target_BP}')
                     mismatch_pair = self.alterations[Target_BP]
                     if mismatch_pair in mm_energy:
                         'mismatch at position'
+                        print("mm")
                         energy_penalty = mm_energy[mismatch_pair]
                         G[pos] = G[pos - 1] - energy_penalty
                         G[pos+1] = G[pos] + params.G_s
                     else:
-                        'nick in the incumbent'
-                        G[pos] = G[pos - 1] - (params.G_s - params.G_nick)
-                        G[pos + 1] = G[pos] + self.G_assoc
-                        nick_case = True
+                        if self.alterations[Target_BP] =="+":
+                            'nick in the incumbent'
+                            G[pos] = G[pos - 1] - (params.G_s - params.G_nick)
+                            G[pos + 1] = G[pos] + self.G_assoc
+                            nick_case = True
+                        else:
+                            "Gap"
+                            print("Gap")
+                            G[pos] = G[pos - 1] -  (params.G_s - self.G_gap)
+                            G[pos + 1] = G[pos] + self.G_assoc
                 else:
                     G[pos] = G[pos - 1] - params.G_s
                     G[pos + 1] = G[pos] + params.G_s
@@ -216,10 +228,16 @@ class IEL:
                         G[pos] = G[pos - 1] - energy_penalty / RT
                         G[pos+1] = G[pos] + params.G_s / RT
                     else:
-                        'nick in the incumbent'
-                        G[pos] = G[pos - 1] - (params.G_s - params.G_nick) / RT
-                        G[pos + 1] = G[pos] + self.G_assoc / RT
-                        nick_case = True
+                        if self.alterations[Target_BP] =="+":
+                            'nick in the incumbent'
+                            G[pos] = G[pos - 1] - (params.G_s - params.G_nick)/RT
+                            G[pos + 1] = G[pos] + self.G_assoc/RT
+                            nick_case = True
+                        else:
+                            "Gap"
+                            print("Gap")
+                            G[pos] = G[pos - 1] -  (params.G_s - self.G_nick)/RT
+                            G[pos + 1] = G[pos] + self.G_assoc/RT
                 else:
                     "no mm nor nicks"
                     G[pos] = G[pos - 1] - params.G_s / RT
