@@ -56,17 +56,18 @@ class IEL:
         for i in range(self.length):
 
             'Check incumbent mismatch'
-            if i not in range(self.toehold):
+            if i in range(self.length,self.toehold):
                 if not check_complement(self.seq[i], cleaned_incumbent[i-self.toehold]):
-                    self.alterations[i] = f'{self.seq[i]}-{cleaned_incumbent[i-self.toehold]}'
+                    self.alterations[i+1] = f'{self.seq[i]}-{cleaned_incumbent[i-self.toehold]}'
 
                 'Check invader mismatch'
             elif not check_complement(self.seq[i], self.invader[i]):
-                self.alterations[i] = f'{self.seq[i]}-{self.invader[i]}'
+                self.alterations[i+1] = f'{self.seq[i]}-{self.invader[i-self.toehold]}'
 
         "sort inorder of Mismatches"
 
         self.alterations = dict(sorted(self.alterations.items()))
+        print(self.alterations)
         return self.alterations,self.N,self.state
 
     def energy(self, params,mm_energy):
@@ -84,7 +85,7 @@ class IEL:
             mismatch_pair = self.alterations[1]
             if mismatch_pair in mm_energy:
                 energy_penalty = mm_energy[mismatch_pair]
-                G[1] = energy_penalty  # Store the energy penalty
+                G[1] = params.G_init - energy_penalty
         else:
             G[1] = params.G_init   # initial binding
 
@@ -95,9 +96,9 @@ class IEL:
                 mismatch_pair = self.alterations[positions]
                 if mismatch_pair in mm_energy:
                     energy_penalty = mm_energy[mismatch_pair]
-                    G[positions] = G[positions-1] + energy_penalty
+                    G[positions] = G[positions-1] - energy_penalty
                 else:
-                    G[positions] = G[positions - 1] + params.G_nick
+                    G[positions] = G[positions - 1] - params.G_nick
             else:
                 G[positions] = G[positions - 1] - params.G_bp
 
@@ -110,7 +111,6 @@ class IEL:
                     mismatch_pair = self.alterations[Target_BP]
                     if mismatch_pair in mm_energy:
                         'mismatch at position'
-                        print("mm")
                         energy_penalty = mm_energy[mismatch_pair]
                         G[pos] = G[pos - 1] - energy_penalty
                         G[pos+1] = G[pos] + params.G_s
@@ -122,7 +122,6 @@ class IEL:
                             nick_case = True
                         else:
                             "Gap"
-                            print("Gap")
                             G[pos] = G[pos - 1] -  (params.G_s - self.G_gap)
                             G[pos + 1] = G[pos] + self.G_assoc
                 else:
@@ -197,7 +196,7 @@ class IEL:
             mismatch_pair = self.alterations[1]
             if mismatch_pair in mm_energy:
                 energy_penalty = mm_energy[mismatch_pair]
-                G[1] = (energy_penalty - jnp.log(self.concentration)) / RT  # Fixed
+                G[1] = (params.G_init - energy_penalty - jnp.log(self.concentration)) / RT
         else:
             G[1] = (params.G_init - jnp.log(self.concentration)) / RT  # initial binding
 
@@ -208,9 +207,9 @@ class IEL:
                 mismatch_pair = self.alterations[positions]
                 if mismatch_pair in mm_energy:
                     energy_penalty = mm_energy[mismatch_pair]
-                    G[positions] = G[positions-1] + energy_penalty / RT
+                    G[positions] = G[positions-1] - energy_penalty / RT
                 else:
-                    G[positions] = G[positions - 1] + params.G_nick / RT
+                    G[positions] = G[positions - 1] - params.G_nick / RT
             else:
                 G[positions] = G[positions - 1] - params.G_bp / RT
 
@@ -235,8 +234,7 @@ class IEL:
                             nick_case = True
                         else:
                             "Gap"
-                            print("Gap")
-                            G[pos] = G[pos - 1] -  (params.G_s - self.G_nick)/RT
+                            G[pos] = G[pos - 1] -  (params.G_s - params.G_nick)/RT
                             G[pos + 1] = G[pos] + self.G_assoc/RT
                 else:
                     "no mm nor nicks"
@@ -325,7 +323,6 @@ class IEL:
 
     def kawasaki(self, params,mm_energy):
         dG = self.energy_rt(params,mm_energy)  # RT-scaled energies
-
         energy_diff = dG[1:] - dG[:-1]
 
         # Kawasaki rule: symmetric rates
@@ -430,13 +427,8 @@ class IEL:
 
         return acceleration
 
-
     def get_nn_energy(self, seq1, seq2, pos, nn_params):
-        """
-        Get nearest-neighbor energy for bases at position pos
-        seq1, seq2: DNA sequences (5' to 3')
-        pos: position in sequence (0-indexed)
-        """
+
         if pos >= len(seq1) - 1 or pos >= len(seq2) - 1:
             return 0.0  # Can't form dinucleotide at end
 
@@ -453,7 +445,7 @@ class IEL:
     def energy_rt_nn(self, params, mm_energy, nn_params):
         """Energy landscape using nearest-neighbor parameters"""
         self.alterations, self.N, self.state = self.sequence_analyser()
-
+        Target_BP = self.toehold + 1
         nick_case = False
         G = self.N * [0]
 
@@ -461,8 +453,22 @@ class IEL:
             G = self.zero_toehold_energy_rt_nn(params, mm_energy, nn_params)
             return jnp.array(G)
 
-        # Initiation (still uses G_init for concentration dependence)
+        # Initiation
         G[1] = (params.G_init - jnp.log(self.concentration)) / RT
+
+        # Toehold binding with NN parameters
+        for pos in range(2, self.toehold + 1):
+            if pos in self.alterations:
+                # Handle mismatch as before
+                mismatch_pair = self.alterations[pos]
+                if mismatch_pair in mm_energy:
+                    energy_penalty = mm_energy[mismatch_pair]
+                    G[pos] = G[pos - 1] + energy_penalty / RT
+                else:
+                    G[pos] = G[pos - 1] + params.G_nick / RT
+            else:
+                nn_energy = self.get_nn_energy(self.seq, self.inc, pos - 1, nn_params)
+                G[pos] = G[pos - 1] - nn_energy / RT
 
         # Toehold binding with NN parameters
         for pos in range(2, self.toehold + 1):
@@ -484,12 +490,11 @@ class IEL:
             G[self.toehold + 1] = G[self.toehold] + params.G_p / RT + params.G_s / RT
 
             for pos in range(self.toehold + 2, self.N - 2, 2):
-                Target_BP = pos - (self.toehold + 1)
 
                 if Target_BP in self.alterations:
                     # Handle mismatches/nicks as before
                     mismatch_pair = self.alterations[Target_BP]
-                    if mismatch_pair in mm_energy:
+                    if Target_BP in mm_energy:
                         energy_penalty = mm_energy[mismatch_pair]
                         G[pos] = G[pos - 1] - params.G_s / RT - energy_penalty / RT
                         G[pos + 1] = G[pos] + params.G_s / RT
@@ -500,10 +505,11 @@ class IEL:
                 else:
                     # Use NN energy for regular base pairs
                     nn_energy = self.get_nn_energy(self.seq, self.inc, Target_BP, nn_params)
-                    G[pos] = G[pos - 1] - params.G_s / RT
+                    G[pos] = G[pos - 1] + nn_energy / RT
                     G[pos + 1] = G[pos] + params.G_s / RT
+                Target_BP+=1
 
-            # Final steps (you might want to use NN here too)
+            # Final steps
             if not nick_case:
                 G[len(G) - 2] = G[len(G) - 3] - params.G_init / RT
             else:
@@ -512,10 +518,63 @@ class IEL:
             # Use NN energy for final base pair formation
             final_nn = self.get_nn_energy(self.seq, self.inc, len(self.seq) - 2, nn_params)
             G[len(G) - 1] = G[len(G) - 2] + final_nn / RT
+        return jnp.array(G)
+
+    def zero_toehold_energy_rt_nn(self, params, mm_energy, nn_params):
+        # Similar to zero_toehold_energy_rt but using NN parameters
+        G_init, G_bp, G_p, G_s, G_mm, *_ = params
+        nick_case = False
+        Target_BP = self.toehold + 1
+        G = self.N * [0]
+
+        # First few states (similar to regular version)
+        G[1] = G_bp / RT
+        G[2] = G[1] + ((G_init - jnp.log(self.concentration)) / RT)
+        G[3] = G[2] + G_s / RT
+
+        # Use NN energies for the rest
+        for pos in range(self.toehold + 2, self.N - 2, 2):
+            if Target_BP in self.alterations:
+                # Handle mismatches/nicks
+                mismatch_pair = self.alterations[Target_BP]
+                if mismatch_pair in mm_energy:
+                    # Mismatch case
+                    energy_penalty = mm_energy[mismatch_pair]
+                    G[pos] = G[pos - 1] - energy_penalty / RT
+                    G[pos + 1] = G[pos] + G_s / RT
+                else:
+                    # Nick or gap case
+                    if self.alterations[Target_BP] == "+":
+                        # Nick
+                        G[pos] = G[pos - 1] - (G_s - params.G_nick) / RT
+                        G[pos + 1] = G[pos] + self.G_assoc / RT
+                        nick_case = True
+                    else:
+                        # Gap
+                        G[pos] = G[pos - 1] - (G_s - self.G_gap) / RT
+                        G[pos + 1] = G[pos] + self.G_assoc / RT
+            else:
+                # Normal base pair - use NN energy
+                nn_energy = self.get_nn_energy(self.seq, self.inc, Target_BP, nn_params)
+                G[pos] = G[pos - 1] - G_s / RT
+                G[pos + 1] = G[pos] + G_s / RT
+            Target_BP += 1
+
+        # Handle final steps
+        if not nick_case:
+            # No nicks thus Ginit
+            G[len(G) - 2] = G[len(G) - 3] - G_init / RT
+        else:
+            # Nicks thus G_assoc
+            G[len(G) - 2] = G[len(G) - 3] - self.G_assoc / RT
+
+        # Use NN energy for final base pair
+        final_nn = self.get_nn_energy(self.seq, self.inc, len(self.seq) - 2, nn_params)
+        G[len(G) - 1] = G[len(G) - 2] + final_nn / RT
 
         return jnp.array(G)
-    def zero_toehold_energy_rt_nn(self,params,mm_energy, nn_params):
-        return
+
+
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s','G_mm','G_nick', 'k_uni', 'k_bi'])
 #params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 2.0,7.5e7, 3e6) original
 RT = 0.590
