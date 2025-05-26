@@ -7,7 +7,6 @@ class IEL:
 
     def __init__(self,Sequence,Incumbent,Invader,
                  toehold,Sequence_length,concentration):
-
         self.state = []
         self.N =()
         self.toehold = toehold
@@ -18,26 +17,26 @@ class IEL:
         self.inc=Incumbent
         self.G_assoc=9
         self.G_gap=2.0
+        self.alterations_energy = [0] * (len(self.seq)+1) #total length is equal to seq (0 pos is 1st bp)
+                                                                                  # (39 pos is 40 bp)
         self.alterations={}
 
-    def sequence_analyser(self):
+    def sequence_analyser(self,params,mm_energy):
+        G_init, G_bp, G_p, G_s, G_mm,G_nick, *_ = params
+        "Track positions of nick and missing bp in incumbent"
 
-        #Track positions of nick and gaps in incumbent
         for index, char in enumerate(self.inc):
-            if char == "+":
-                self.alterations[index+self.toehold] = char
-            elif char =="-":
-                self.alterations[index + self.toehold] = char
+            if char == "+": #Nick
+                self.alterations_energy[index + self.toehold+1] += G_nick  #added toehold for position in seq
+                self.alterations[index + self.toehold+1]="+"
 
-
-        #Track positions of nick and gaps in incumbent
-        for index, char in enumerate(self.invader):
-            if char == "-":
-                self.alterations[index+self.toehold] = char
-
+            if char =="-": #Missng bp
+                self.alterations_energy[index + self.toehold+1] += self.G_gap
+                self.alterations[index + self.toehold+1]="-"
 
         cleaned_incumbent = self.inc.replace("+", "")
         cleaned_incumbent=cleaned_incumbent[:self.length]
+
         "to get the length of desired sequence"
         self.inc = cleaned_incumbent[:self.length]
         self.state = jnp.concatenate([
@@ -52,122 +51,114 @@ class IEL:
                            'G': 'C', 'C': 'G'}
             return complements.get(seq_char) == comp_char
 
-        "checks for Mismatches in sequence and complementary invader, and incumbent "
-        for i in range(self.length):
+        "checks for Mismatches in sequence and complementary invader"
+        for index, value in enumerate(self.seq):
+                "Check invader mismatch"
+                if not check_complement(self.seq[index], self.invader[index]):
+                    mismatches= f'{self.seq[index]}-{self.invader[index]}'
+                    if mismatches in mm_energy:
+                        self.alterations_energy[index+1] += mm_energy[mismatches]
+                        self.alterations[index+1] = mismatches
+                        print("invader  mm")
 
-            'Check incumbent mismatch'
-            if i in range(self.length,self.toehold):
-                if not check_complement(self.seq[i], cleaned_incumbent[i-self.toehold]):
-                    self.alterations[i+1] = f'{self.seq[i]}-{cleaned_incumbent[i-self.toehold]}'
-
-                'Check invader mismatch'
-            elif not check_complement(self.seq[i], self.invader[i]):
-                self.alterations[i+1] = f'{self.seq[i]}-{self.invader[i-self.toehold]}'
-
-        "sort inorder of Mismatches"
+        "checks for Mismatches in sequence and incumbent"
+        for index, value in enumerate(cleaned_incumbent):
+            if cleaned_incumbent[index] != '-':  # skips "-" for a gap
+                    if not check_complement(self.seq[self.toehold + index], cleaned_incumbent[index]):
+                        mismatches = f'{self.seq[self.toehold + index]}-{cleaned_incumbent[index]}'
+                        if mismatches in mm_energy:
+                            self.alterations_energy[index + self.toehold+1] += mm_energy[mismatches]
+                            self.alterations[index + self.toehold+1] = mismatches
+                            print("inc mm")
 
         self.alterations = dict(sorted(self.alterations.items()))
-        print(self.alterations)
-        return self.alterations,self.N,self.state
+        return self.alterations_energy, self.N, self.state
 
-    def energy(self, params,mm_energy):
-        self.alterations, self.N, self.state=self.sequence_analyser()
-        nick_case=False
-        Target_BP=self.toehold+1
+    def energy(self, params, mm_energy):
+        G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
+        self.alterations_energy, self.N, self.state = self.sequence_analyser(params, mm_energy)
+        Target_bp = self.toehold + 1
+        Nick = False
 
         G = self.N * [0]
+
         if self.toehold == 0:
-            G = self.zero_toehold_energy(params,mm_energy)
+            G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
-        "initiation"
-        if 1 in self.alterations:
-            mismatch_pair = self.alterations[1]
-            if mismatch_pair in mm_energy:
-                energy_penalty = mm_energy[mismatch_pair]
-                G[1] = params.G_init - energy_penalty
-        else:
-            G[1] = params.G_init   # initial binding
+        # Initiation
+        G[1] = G_init + self.alterations_energy[1]
 
-        'toehold binding energy'
+        "for toehold energy"
         for positions in range(2, self.toehold + 1):
-            'Check if there is a mismatch at position'
-            if positions in self.alterations:
-                mismatch_pair = self.alterations[positions]
-                if mismatch_pair in mm_energy:
-                    energy_penalty = mm_energy[mismatch_pair]
-                    G[positions] = G[positions-1] - energy_penalty
+            G[positions] = G[positions - 1] - G_bp + self.alterations_energy[positions]
+
+        "for first half step of branch migration energy"
+        current_pos = self.toehold + 1
+        if current_pos < self.N:
+            G[current_pos] = G[current_pos - 1] + G_s + G_p
+            current_pos += 1
+
+        nick_positions = set(self.alterations)
+        "for all half anf full steps in branch migration"
+        while current_pos < self.N - 2:
+            "full step (at bp)"
+            if Target_bp in nick_positions: #for a nick
+                G[current_pos] = G[current_pos - 1] - G_s - self.G_assoc + self.alterations_energy[Target_bp]
+                nick = True
+            else:   #intact incumbent
+                G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
+                nick = False
+            current_pos += 1 #to calculate half step
+            "half step"
+            if current_pos < self.N - 2:
+                if nick is True: #gain G_s and G_assoc
+                    G[current_pos] = G[current_pos - 1] + G_s + self.G_assoc
                 else:
-                    G[positions] = G[positions - 1] - params.G_nick
-            else:
-                G[positions] = G[positions - 1] - params.G_bp
+                    G[current_pos] = G[current_pos - 1] + G_s
+                current_pos += 1 #to go back to  full step
 
-        'energy levels for full and half steps'
-        if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + params.G_p + params.G_s #first half step after toehold
+            Target_bp += 1
 
-            for pos in range(self.toehold + 2, self.N - 2, 2): #sets energy levels for all steps
-                if Target_BP in self.alterations:  # Check if there's a mismatch at position i
-                    mismatch_pair = self.alterations[Target_BP]
-                    if mismatch_pair in mm_energy:
-                        'mismatch at position'
-                        energy_penalty = mm_energy[mismatch_pair]
-                        G[pos] = G[pos - 1] - energy_penalty
-                        G[pos+1] = G[pos] + params.G_s
-                    else:
-                        if self.alterations[Target_BP] =="+":
-                            'nick in the incumbent'
-                            G[pos] = G[pos - 1] - (params.G_s - params.G_nick)
-                            G[pos + 1] = G[pos] + self.G_assoc
-                            nick_case = True
-                        else:
-                            "Gap"
-                            G[pos] = G[pos - 1] -  (params.G_s - self.G_gap)
-                            G[pos + 1] = G[pos] + self.G_assoc
-                else:
-                    G[pos] = G[pos - 1] - params.G_s
-                    G[pos + 1] = G[pos] + params.G_s
-                Target_BP+=1
-
-            'for decoupling at the end'
-            if not nick_case:
-                "no nicks thus Ginit"
-                G[len(G) - 2] = G[len(G) - 3] - params.G_init
-            else:
-                "nicks thus G_assoc"
-                G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
-            G[len(G) - 1] = G[len(G) - 2] - params.G_bp
+        # Last two steps
+        if Nick is True:
+            G[self.N - 2] = G[self.N - 3] - self.G_assoc
+        else:
+            G[self.N - 2] = G[self.N - 3] - G_init
+        G[self.N - 1] = G[self.N - 2] - G_p
 
         return jnp.array(G)
 
-    def zero_toehold_energy(self, params,mm_energy):
+    def zero_toehold_energy(self, params):
+
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
         nick_case=False
-        Target_BP = self.toehold + 1
+        Target_bp = 1
+        current_pos=4
         G = self.N * [0]  # G0
         G[1] = G_bp #bp
         G[2] = G[1] + G_init #intitian
-        G[3]= G[2]+ G_s
-
+        G[3]= G[2]+ G_s+G_p
+        nick_positions = set(self.alterations)
         'energy levels for full and half steps'
-        for pos in range(self.toehold + 2, self.N - 2, 2):  # sets energy levels for all steps
-
-            if Target_BP in self.alterations:  # Check if there's a mismatch at position i
-                mismatch_pair = self.alterations[Target_BP]
-                if mismatch_pair in mm_energy:
-                    'mismatch at position'
-                    energy_penalty = mm_energy[mismatch_pair]
-                    G[pos] = G[pos - 1] - energy_penalty
-                    G[pos + 1] = G[pos] + params.G_s
+        while current_pos < self.N - 2:
+            "full step (at bp)"
+            if Target_bp in nick_positions:  # for a nick
+                G[current_pos] = G[current_pos - 1] - G_s - self.G_assoc + self.alterations_energy[Target_bp]
+                nick = True
+            else:  # intact incumbent
+                G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
+                nick = False
+            current_pos += 1  # to calculate half step
+            "half step"
+            if current_pos < self.N - 2:
+                if nick is True:  # gain G_s and G_assoc
+                    G[current_pos] = G[current_pos - 1] + G_s + self.G_assoc
                 else:
-                    'nick in the incumbent'
-                    G[pos] = G[pos - 1] - (params.G_s - params.G_nick)
-                    G[pos + 1] = G[pos] + self.G_assoc
-                    nick_case = True
-            else:
-                G[pos] = G[pos - 1] - params.G_s
-                G[pos + 1] = G[pos] + params.G_s
-            Target_BP+=1
+                    G[current_pos] = G[current_pos - 1] + G_s
+                current_pos += 1  # to go back to  full step
+
+            Target_bp += 1
 
         'for decoupling at the end'
         if not nick_case:
@@ -179,106 +170,89 @@ class IEL:
         G[len(G) - 1] = G[len(G) - 2] - params.G_bp
         return jnp.array(G)
 
-
-    def energy_rt(self, params,mm_energy):
-
-        self.alterations, self.N, self.state=self.sequence_analyser()
-        Target_BP = self.toehold + 1
-        nick_case=False
+    def energy_rt(self, params, mm_energy):
+        G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
+        self.alterations_energy, self.N, self.state = self.sequence_analyser(params, mm_energy)
+        Target_bp = self.toehold + 1
+        nick = False
 
         G = self.N * [0]
+
         if self.toehold == 0:
-            G = self.zero_toehold_energy_rt(params,mm_energy)
+            G = self.zero_toehold_energy(params)
             return jnp.array(G)
 
-        "initiation"
-        if 1 in self.alterations:
-            mismatch_pair = self.alterations[1]
-            if mismatch_pair in mm_energy:
-                energy_penalty = mm_energy[mismatch_pair]
-                G[1] = (params.G_init - energy_penalty - jnp.log(self.concentration)) / RT
-        else:
-            G[1] = (params.G_init - jnp.log(self.concentration)) / RT  # initial binding
+        # Initiation
+        G[1] =  (G_init - jnp.log(self.concentration))/RT + self.alterations_energy[1]/RT
 
-        'toehold binding energy'
+        "for toehold energy"
         for positions in range(2, self.toehold + 1):
-            'Check if there is a mismatch at position'
-            if positions in self.alterations:
-                mismatch_pair = self.alterations[positions]
-                if mismatch_pair in mm_energy:
-                    energy_penalty = mm_energy[mismatch_pair]
-                    G[positions] = G[positions-1] - energy_penalty / RT
+            G[positions] = G[positions - 1] - G_bp/RT + self.alterations_energy[positions]/RT
+
+        "for first half step of branch migration energy"
+        current_pos = self.toehold + 1
+        if current_pos < self.N:
+            G[current_pos] = G[current_pos - 1] + G_s/RT + G_p/RT
+            current_pos += 1
+
+        nick_positions = set(self.alterations)
+        "for all half anf full steps in branch migration"
+        while current_pos < self.N - 2:
+            "full step (at bp)"
+            if Target_bp in nick_positions: #for a nick
+                G[current_pos] = G[current_pos - 1] - G_s/RT - self.G_assoc/RT + self.alterations_energy[Target_bp]/RT
+                nick = True
+            else:   #intact incumbent
+                G[current_pos] = G[current_pos - 1] - G_s/RT + self.alterations_energy[Target_bp]/RT
+                nick = False
+            current_pos += 1 #to calculate half step
+            "half step"
+            if current_pos < self.N - 2:
+                if nick is True: #gain G_s and G_assoc
+                    G[current_pos] = G[current_pos - 1] + G_s/RT + self.G_assoc/RT
                 else:
-                    G[positions] = G[positions - 1] - params.G_nick / RT
-            else:
-                G[positions] = G[positions - 1] - params.G_bp / RT
+                    G[current_pos] = G[current_pos - 1] + G_s/RT
+                current_pos += 1 #to go back to  full step
+            Target_bp += 1
 
-        'energy levels for full and half steps'
-        if self.N > self.toehold + 1:
-            G[self.toehold + 1] = G[self.toehold] + params.G_p / RT  + params.G_s  / RT #first half step after toehold
-
-            for pos in range(self.toehold + 2, self.N - 2, 2): #sets energy levels for all steps
-
-                if Target_BP in self.alterations:  # Check if there's a mismatch at position i
-                    mismatch_pair = self.alterations[Target_BP]
-                    if mismatch_pair in mm_energy:
-                        'mismatch at position'
-                        energy_penalty = mm_energy[mismatch_pair]
-                        G[pos] = G[pos - 1] - energy_penalty / RT
-                        G[pos+1] = G[pos] + params.G_s / RT
-                    else:
-                        if self.alterations[Target_BP] =="+":
-                            'nick in the incumbent'
-                            G[pos] = G[pos - 1] - (params.G_s - params.G_nick)/RT
-                            G[pos + 1] = G[pos] + self.G_assoc/RT
-                            nick_case = True
-                        else:
-                            "Gap"
-                            G[pos] = G[pos - 1] -  (params.G_s - params.G_nick)/RT
-                            G[pos + 1] = G[pos] + self.G_assoc/RT
-                else:
-                    "no mm nor nicks"
-                    G[pos] = G[pos - 1] - params.G_s / RT
-                    G[pos + 1] = G[pos] + params.G_s / RT
-                Target_BP +=1
-            'for decoupling at the end'
-            if not nick_case:
-                "no nicks thus Ginit"
-                G[len(G) - 2] = G[len(G) - 3] - params.G_init / RT
-            else:
-                "nicks thus G_assoc"
-                G[len(G) - 2] = G[len(G) - 3] - self.G_assoc / RT
-            G[len(G) - 1] = G[len(G) - 2] - params.G_bp / RT
+        # Last two steps
+        if nick is True:
+            G[self.N - 2] = G[self.N - 3] - self.G_assoc/RT
+        else:
+            G[self.N - 2] = G[self.N - 3] - G_init/RT
+        G[self.N - 1] = G[self.N - 2] - G_p/RT
         return jnp.array(G)
 
-    def zero_toehold_energy_rt(self, params,mm_energy):
+    def zero_toehold_energy_rt(self, params):
+
         G_init, G_bp, G_p, G_s, G_mm, *_ = params
-        nick_case = False
-        Target_BP = self.toehold + 1
-        G = self.N * [0]
-        G[1] = G_bp / RT
-        G[2] = G[1] + ((G_init - jnp.log(self.concentration)) / RT)
-        G[3] = G[2] + G_s /RT
-
+        nick_case=False
+        Target_bp = 1
+        current_pos=4
+        G = self.N * [0]  # G0
+        G[1] = G_bp/RT #bp
+        G[2] = G[1] +  (G_init - jnp.log(self.concentration))/RT + self.alterations_energy[1]/RT
+        G[3]= G[2]+ G_s/RT+G_p/RT
+        nick_positions = set(self.alterations)
         'energy levels for full and half steps'
-        for pos in range(self.toehold + 2, self.N - 2, 2):  # sets energy levels for all steps
-
-            if Target_BP in self.alterations:  # Check if there's a mismatch at position i
-                mismatch_pair = self.alterations[Target_BP]
-                if mismatch_pair in mm_energy:
-                    'mismatch at position'
-                    energy_penalty = mm_energy[mismatch_pair]
-                    G[pos] = G[pos - 1] - energy_penalty/RT
-                    G[pos + 1] = G[pos] + params.G_s/RT
+        while current_pos < self.N - 2:
+            "full step (at bp)"
+            if Target_bp in nick_positions:  # for a nick
+                G[current_pos] = G[current_pos - 1] - G_s/RT - self.G_assoc/RT + self.alterations_energy[Target_bp]/RT
+                nick = True
+            else:  # intact incumbent
+                G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]/RT
+                nick = False
+            current_pos += 1  # to calculate half step
+            "half step"
+            if current_pos < self.N - 2:
+                if nick is True:  # gain G_s and G_assoc
+                    G[current_pos] = G[current_pos - 1] + G_s + self.G_assoc/RT
                 else:
-                    'nick in the incumbent'
-                    G[pos] = G[pos - 1] - (params.G_s - params.G_nick)/RT
-                    G[pos + 1] = G[pos] + self.G_assoc/RT
-                    nick_case = True
-            else:
-                G[pos] = G[pos - 1] - params.G_s/RT
-                G[pos + 1] = G[pos] + params.G_s/RT
-            Target_BP+=1
+                    G[current_pos] = G[current_pos - 1] + G_s/RT
+                current_pos += 1  # to go back to  full step
+
+            Target_bp += 1
 
         'for decoupling at the end'
         if not nick_case:
@@ -290,34 +264,44 @@ class IEL:
         G[len(G) - 1] = G[len(G) - 2] - params.G_bp/RT
         return jnp.array(G)
 
-
     def metropolis(self, params,mm_energy):
-        dG = self.energy_rt(params,mm_energy)  # RT-scaled energies
-        energy_diff = dG[1:] - dG[:-1]  # ΔG between states
+        dG = self.energy_rt(params,mm_energy)
 
-        # Base rates (uni-molecular for all transitions)
-        k_plus = jnp.full(self.N - 1, params.k_uni)
-        k_minus = jnp.full(self.N - 1, params.k_uni)
+        # For uni-molecular transitions
+        energy_diff = dG[1:] - dG[:-1]
 
-        # Metropolis rule (vectorized)
-        k_plus = jnp.where(energy_diff > 0, k_plus * jnp.exp(-energy_diff), k_plus)
-        k_minus = jnp.where(energy_diff < 0, k_minus * jnp.exp(energy_diff), k_minus)
+        # Initialize with constant downhill rate
+        k_plus = params.k_uni * jnp.ones(self.N - 1)
+        k_minus = params.k_uni * jnp.ones(self.N - 1)
 
-        # Bi-molecular initiation (if toehold exists)
-        if self.toehold > 0:
-            k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
-            k_minus = k_minus.at[0].set(params.k_bi * self.concentration * jnp.exp(energy_diff[0]))
+        # Metropolis rule: if energy increases, scale rate by Boltzmann factor
+        uphill_forward = energy_diff > 0
+        uphill_backward = energy_diff < 0
+
+        k_plus = k_plus.at[uphill_forward].mul(jnp.exp(-energy_diff[uphill_forward]))
+        k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward]))
+
+        # Bi-molecular transitions
+        log_conc_factor = jnp.log(self.concentration)  # Relative to 1M standard
+
+        if self.toehold == 0:
+            "zero toehold: use fraying penalty"
+            fraying_penalty = 1.7 / 0.59  # |ΔG_bp|/RT
+            fraying_factor = 2.0 * jnp.exp(-fraying_penalty)
+            k_plus = k_plus.at[0].set(params.k_bi * self.concentration * fraying_factor)
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0] - log_conc_factor))
         else:
-            k_plus = k_plus.at[0].set(params.k_bi * self.concentration * 1e-9)  # 1% efficiency
-            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
-        # Irreversible completion (if branch migration exists)
+            k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0] - log_conc_factor))
+
+        # Final dissociation (D→E)
         if self.N > self.toehold + 1:
             k_plus = k_plus.at[-1].set(params.k_uni)
-            k_minus = k_minus.at[-1].set(0.0)
+            k_minus = k_minus.at[-1].set(0.0)  # Irreversible
 
-        # Pad with zeros for boundary conditions
-        k_plus = jnp.pad(k_plus, (0, 1))  # Add zero at end
-        k_minus = jnp.pad(k_minus, (1, 0))  # Add zero at start
+        # Pad for boundary conditions
+        k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])
+        k_minus = jnp.concatenate([jnp.zeros(1), k_minus])
 
         return k_plus, k_minus
 
@@ -403,6 +387,7 @@ class IEL:
         return rate
 
     def acceleration(self, params,mm_energy, conc1, conc2):
+        # TODO: to change Acceleration to compare to full no mismatch
         # Calculate reference rate for toehold=0
         model_0 = IEL(self.seq, self.invader,self.invader, 0, self.length, conc2)
         keff_0 = model_0.k_eff(params,mm_energy)
@@ -444,7 +429,7 @@ class IEL:
 
     def energy_rt_nn(self, params, mm_energy, nn_params):
         """Energy landscape using nearest-neighbor parameters"""
-        self.alterations, self.N, self.state = self.sequence_analyser()
+        self.alterations_energy, self.N, self.state = self.sequence_analyser(params,mm_energy)
         Target_BP = self.toehold + 1
         nick_case = False
         G = self.N * [0]
