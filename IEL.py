@@ -3,6 +3,7 @@ import random
 import jax.numpy as jnp
 from jax.lax import scan
 import jax
+import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 class IEL:
@@ -24,19 +25,34 @@ class IEL:
         self.alterations={}
 
     def sequence_analyser(self,params,mm_energy):
+        #TODO:add firsts mismatch cae to shorten the toehold
         G_init, G_bp, G_p, G_s, *_ = params
+
+        def check_complement(seq_char, comp_char):
+            complements = {'A': 'T', 'T': 'A',
+                           'G': 'C', 'C': 'G'}
+            return complements.get(seq_char) == comp_char
+
         "Track positions of nick and missing bp in incumbent"
-        G_nick=0
         for index, char in enumerate(self.inc):
             if char == "+": #Nick
-                self.alterations_energy[index + self.toehold+1] += G_nick
                 self.alterations[index + self.toehold+1]="+"
-
         cleaned_incumbent = self.inc.replace("+", "")
         cleaned_incumbent=cleaned_incumbent[:self.length]
-
-        "to get the length of desired sequence"
         self.inc = cleaned_incumbent[:self.length]
+
+        "check for mismatch in first bp, then treat the sequence with shorter Toehold"
+        if not check_complement(self.seq[0], self.invader[0]):
+            mismatches = f'{self.seq[0]}-{self.invader[0]}'
+            print(f'mismatches {mismatches}')
+            self.toehold-=1
+            self.seq=self.seq[1:]
+            self.invader=self.invader[1:]
+            self.inc=self.invader[1:]
+            self.length-=1
+            print(f'self.length {self.length}')
+
+        #TODO: fix the state numbers and size
         self.state = jnp.concatenate([
             jnp.arange(0, self.toehold + 1),
             jnp.arange(self.toehold + 0.5, self.length + 0.5, 0.5),
@@ -44,29 +60,13 @@ class IEL:
         ])
         self.N =len(self.state)
 
-        def check_complement(seq_char, comp_char):
-            complements = {'A': 'T', 'T': 'A',
-                           'G': 'C', 'C': 'G'}
-            return complements.get(seq_char) == comp_char
-
         "checks for Mismatches in sequence and complementary invader"
         for index, value in enumerate(self.seq):
                 "Check invader mismatch"
                 if not check_complement(self.seq[index], self.invader[index]):
                     mismatches= f'{self.seq[index]}-{self.invader[index]}'
-                    #print(f'mismatches {mismatches}')
                     if mismatches in mm_energy:
                         self.alterations_energy[index+1] += mm_energy[mismatches]
-
-
-        "checks for Mismatches in sequence and incumbent"
-        for index, value in enumerate(cleaned_incumbent):
-            if cleaned_incumbent[index] != '-':  # skips "-" for a gap
-                    if not check_complement(self.seq[self.toehold + index], cleaned_incumbent[index]):
-                        mismatches = f'{self.seq[self.toehold + index]}-{cleaned_incumbent[index]}'
-                        #print(f'mismatches {mismatches}')
-                        if mismatches in mm_energy:
-                            self.alterations_energy[index + self.toehold+1] += mm_energy[mismatches]
 
         self.alterations = dict(sorted(self.alterations.items()))
 
@@ -78,7 +78,7 @@ class IEL:
         Target_bp = self.toehold + 1
         first_inc=False
         double_inc=False
-        i=0
+
         G_init = (G_init - jnp.log(self.concentration))
 
         G = self.N * [0]
@@ -210,8 +210,54 @@ class IEL:
 
         return k_plus, k_minus
 
+    def metropolis_new(self, params, mm_energy):
+        dG = self.energy(params, mm_energy)
+        energy_diff = dG[1:] - dG[:-1]
+        'Metropolis for unimolecular steps'
+        k_plus = params.k_uni * jnp.ones(self.N - 1)
+        k_minus = params.k_uni * jnp.ones(self.N - 1)
+
+        uphill_forward = energy_diff > 0
+        uphill_backward = energy_diff < 0
+
+        k_plus = k_plus.at[uphill_forward].mul(jnp.exp(-energy_diff[uphill_forward]))
+        k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward]))
+
+        # Bimolecular first step (as paper describes)
+        if self.toehold == 0:
+            fraying_penalty = params.G_bp / RT
+            fraying_factor = 2.0 * jnp.exp(-fraying_penalty)
+            k_plus = k_plus.at[0].set(params.k_bi * self.concentration * fraying_factor) #fraying rate
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
+        else:
+            k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
+
+        # Final dissociation
+        if self.N > self.toehold + 1:
+            k_plus = k_plus.at[-1].set(params.k_uni)
+            k_minus = k_minus.at[-1].set(0.0)  # Irreversible
+
+        # Pad for boundary conditions
+        k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])
+        k_minus = jnp.concatenate([jnp.zeros(1), k_minus])
+
+        '''Koff for early dissociation'''
+        k_off = jnp.zeros(self.N)  # Initialize all states to 0
+
+        # Full-step indices: Skip half-steps by stepping in increments of 2
+        full_step_indices = self.toehold + 1 + 2 * jnp.arange(self.length)
+        remaining_bps = self.length - jnp.arange(self.length)
+
+        # Assign k_off only to full-step states (Eq. 7)
+        k_off = k_off.at[full_step_indices].set(
+            params.k_uni * jnp.exp(-remaining_bps * params.G_bp / RT)
+        )
+
+        return k_plus, k_minus, k_off
+
     def kawasaki(self, params,mm_energy):
-        dG = self.energy_rt(params,mm_energy)  # RT-scaled energies
+        dG = self.energy(params,mm_energy)  # RT-scaled energies
         energy_diff = dG[1:] - dG[:-1]
 
         # Kawasaki rule: symmetric rates
@@ -237,7 +283,7 @@ class IEL:
     def random_walk(self, params,mm_energy, start=0, end=-1):
 
         end = len(self.state)-1 if end == -1 else jnp.argwhere(self.state == end)
-        k_plus, k_minus = self.metropolis(params,mm_energy)
+        k_plus, k_minus,k_off = self.metropolis(params,mm_energy)
         time = 0
         pos = start
 
@@ -283,6 +329,35 @@ class IEL:
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
+    def calculate_mfpt(self,params,mm):
+        k_plus,k_minus,k_off=self.metropolis_new(params,mm)
+        print(k_plus,k_minus,k_off)
+        N = len(k_plus)  # Number of steps (0 to N)
+        p = np.zeros(N + 1)  # p_n / j_{N-1}
+        j = np.zeros(N)  # j_n / j_{N-1} (indices 0 to N-1)
+
+        # Boundary conditions
+        p[N] = 0  # Absorbing at n=N
+        j[N - 1] = 1  # Normalization
+
+        # Backward recursion
+        for n in range(N - 1, -1, -1):
+            if n == N - 1:
+                p[n] = 1 / k_plus[n]
+            else:
+                p[n] = (1 / k_plus[n]) * j[n] + (k_minus[n + 1] / k_plus[n]) * p[n + 1]
+
+            if n < N - 1:
+                j[n] = j[n + 1] + k_off[n + 1] * p[n + 1]
+
+        # Compute MFPT
+        print(f'k_plus[0] {k_plus[0]},p[0] {p[0]}')
+        j0 = k_plus[0] * p[0]
+        print(j0)
+        T_pass = (j[N - 1] / j0) * np.sum(p)
+        print(T_pass)
+        return T_pass
+
     def k_eff(self,params,mm_energy):
         rates=[]
         for th in range(15):
@@ -300,8 +375,8 @@ class IEL:
                 mftp_model= model_0.time_mfp(params,mm_energy)
 
             rate = 1/mftp_model
-            #print(f'th {th} |{rate}')
             rates.append(rate)
+            print(f'{th} | {rate}')
         return jnp.array(rates)
 
     def k_eff_analytical(self, params):
