@@ -25,7 +25,6 @@ class IEL:
         self.alterations={}
 
     def sequence_analyser(self,params,mm_energy):
-        #TODO:add firsts mismatch cae to shorten the toehold
         G_init, G_bp, G_p, G_s, *_ = params
 
         def check_complement(seq_char, comp_char):
@@ -42,6 +41,7 @@ class IEL:
         self.inc = cleaned_incumbent[:self.length]
 
         "check for mismatch in first bp, then treat the sequence with shorter Toehold"
+        #TODO: add more cases to handel the positions 1 and for double.
         if not check_complement(self.seq[0], self.invader[0]):
             mismatches = f'{self.seq[0]}-{self.invader[0]}'
             print(f'mismatches {mismatches}')
@@ -52,11 +52,10 @@ class IEL:
             self.length-=1
             print(f'self.length {self.length}')
 
-        #TODO: fix the state numbers and size
         self.state = jnp.concatenate([
             jnp.arange(0, self.toehold + 1),
             jnp.arange(self.toehold + 0.5, self.length + 0.5, 0.5),
-            jnp.array([self.length + 0.5, self.length + 1])
+            jnp.array([self.length + 0.5])
         ])
         self.N =len(self.state)
 
@@ -125,9 +124,9 @@ class IEL:
             Target_bp += 1
 
         if double_inc:
-            G[self.N - 2] = G[self.N - 3] - self.G_assoc
+            G[self.N - 2] = G[self.N - 3] - self.G_assoc-G_s
         else:
-            G[self.N - 2] = G[self.N - 3] - G_init
+            G[self.N - 2] = G[self.N - 3] - G_init-G_s
         G[self.N - 1] = G[self.N - 2] - G_p
         return jnp.array(G)
 
@@ -515,4 +514,4 @@ class IEL:
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
 #params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 2.0,7.5e7, 3e6) original
-RT = 0.590
+RT = 0.59
