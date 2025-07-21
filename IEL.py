@@ -44,13 +44,13 @@ class IEL:
         #TODO: add more cases to handel the positions 1 and for double.
         if not check_complement(self.seq[0], self.invader[0]):
             mismatches = f'{self.seq[0]}-{self.invader[0]}'
-            print(f'mismatches {mismatches}')
+            #print(f'mismatches {mismatches}')
             self.toehold-=1
             self.seq=self.seq[1:]
             self.invader=self.invader[1:]
             self.inc=self.invader[1:]
             self.length-=1
-            print(f'self.length {self.length}')
+            #print(f'self.length {self.length}')
 
         self.state = jnp.concatenate([
             jnp.arange(0, self.toehold + 1),
@@ -66,9 +66,10 @@ class IEL:
                     mismatches= f'{self.seq[index]}-{self.invader[index]}'
                     if mismatches in mm_energy:
                         self.alterations_energy[index+1] += mm_energy[mismatches]
+                        self.alterations[index ]=f'{self.seq[index]}-{self.invader[index]}'
 
         self.alterations = dict(sorted(self.alterations.items()))
-        #print(self.alterations)
+        print(self.alterations)
         return self.alterations_energy, self.N, self.state
 
     def energy(self, params, mm_energy):
@@ -379,26 +380,20 @@ class IEL:
             print(f'{th} | {rate}')
         return jnp.array(rates)
 
-    def k_eff_mm(self,params,mm_energy,dataset):
-        rates=[]
-        for th in range(15):
-            if th > self.toehold: #toehold is less than given toehold
-                'adds bp to incumbent to match sequence'
-                index=th - self.toehold
-                new_inc=self.inc[index:]
-                model_0 = IEL(self.seq, new_inc,self.invader, th, self.length, self.concentration)
-                mftp_model= model_0.time_mfp(params,mm_energy)
+    def k_eff_mm(self, params, mm_energy, sequence_set):
+        rates = []
+        positions = list(range(1, len(sequence_set) + 1))
+        print(sequence_set)# auto-detect length
 
-            else:    #toehold is greater than given toehold
-                'removed bp from incumbent to match sequence'
-                new_inc=self.invader[th:self.toehold]+self.inc
-                model_0 = IEL(self.seq, new_inc, self.invader, th, self.length, self.concentration)
-                mftp_model= model_0.time_mfp(params,mm_energy)
-
-            rate = 1/mftp_model
+        for i, new_seq in enumerate(sequence_set):
+            mismatch_pos = positions[i]
+            model = IEL(self.seq, self.inc, new_seq, 6, self.length, self.concentration)
+            mfpt = model.time_mfp(params, mm_energy)
+            rate = 1 / mfpt
             rates.append(rate)
-            print(f'{th} | {rate}')
-        return jnp.array(rates)
+            print(f"Mismatch at pos {mismatch_pos} | MFPT = {mfpt} | Rate = {rate}")
+        rates=jnp.log10(jnp.array(rates))
+        return rates
 
     def k_eff_analytical(self, params):
         k_bi = params.k_bi
