@@ -68,7 +68,7 @@ class IEL:
                         self.alterations_energy[index+1] += mm_energy[mismatches]
 
         self.alterations = dict(sorted(self.alterations.items()))
-
+        #print(self.alterations)
         return self.alterations_energy, self.N, self.state
 
     def energy(self, params, mm_energy):
@@ -329,6 +329,7 @@ class IEL:
         return ps.sum()
 
     def calculate_mfpt(self,params,mm):
+        #TODO:fix the koff and mfpt and change from moving toehold to fixed with mm moving
         k_plus,k_minus,k_off=self.metropolis_new(params,mm)
         print(k_plus,k_minus,k_off)
         N = len(k_plus)  # Number of steps (0 to N)
@@ -357,7 +358,28 @@ class IEL:
         print(T_pass)
         return T_pass
 
-    def k_eff(self,params,mm_energy):
+    def k_eff_th(self,params,mm_energy):
+        rates=[]
+        for th in range(15):
+            if th > self.toehold: #toehold is less than given toehold
+                'adds bp to incumbent to match sequence'
+                index=th - self.toehold
+                new_inc=self.inc[index:]
+                model_0 = IEL(self.seq, new_inc,self.invader, th, self.length, self.concentration)
+                mftp_model= model_0.time_mfp(params,mm_energy)
+
+            else:    #toehold is greater than given toehold
+                'removed bp from incumbent to match sequence'
+                new_inc=self.invader[th:self.toehold]+self.inc
+                model_0 = IEL(self.seq, new_inc, self.invader, th, self.length, self.concentration)
+                mftp_model= model_0.time_mfp(params,mm_energy)
+
+            rate = 1/mftp_model
+            rates.append(rate)
+            print(f'{th} | {rate}')
+        return jnp.array(rates)
+
+    def k_eff_mm(self,params,mm_energy,dataset):
         rates=[]
         for th in range(15):
             if th > self.toehold: #toehold is less than given toehold
@@ -379,18 +401,18 @@ class IEL:
         return jnp.array(rates)
 
     def k_eff_analytical(self, params):
-        keff_analytic=[]
+        k_bi = params.k_bi
+        k_uni = params.k_uni
+        G_bp = abs(params.G_bp)
+        G_s_plus_p = params.G_s + params.G_p
+        b = self.length
+        k_eff_analytical=[]
         for h in range(15):
-            k_bi = params.k_bi
-            k_uni = params.k_uni
-            G_bp = abs(params.G_bp)
-            G_s_plus_p = params.G_s + params.G_p
-            b = self.length
 
             # Calculate fundamental rates
             k_first = 0.5 * k_uni * jnp.exp(-G_s_plus_p / RT)
 
-            lambda_factor = jnp.exp((-G_bp + params.G_init) / RT) * self.concentration
+            lambda_factor = jnp.exp((-G_bp + params.G_init) / RT)*self.concentration
             k_r_1 = k_bi * lambda_factor
 
             if h == 0:
@@ -398,14 +420,16 @@ class IEL:
                 fraying_factor = 2.0 * jnp.exp(-G_bp / RT)
                 p_bm_1 = k_first / (k_first + (b - 1) * k_r_1)
                 k_eff_1 = k_bi * p_bm_1
-                keff= fraying_factor * k_eff_1
-                keff_analytic.append(keff)
+                rate =fraying_factor * k_eff_1
+                #print(f'rate | {rate}')
+                k_eff_analytical.append(rate)
 
             elif h == 1:
                 # Equation 13: k_eff(1) = k_bi * p_bm|toe(1)
                 p_bm = k_first / (k_first + (b - 1) * k_r_1)
-                keff= k_bi * p_bm
-                keff_analytic.append(keff)
+                rate= k_bi * p_bm
+                #print(f'rate | {rate}')
+                k_eff_analytical.append(rate)
 
             else:  # h > 1
                 # Equation 17: k_eff(h) = (k_bi * p_zip) / (1 + (b-1) * k_r(h) / k_first)
@@ -414,15 +438,18 @@ class IEL:
                 # Equation 25: k_r(h)
                 k_r_h = jnp.exp(-(h - 1) * G_bp / RT) / (1 / k_uni + 1 / k_r_1)
 
-                keff= (k_bi * p_zip) / (1 + (b - 1) * k_r_h / k_first)
-                keff_analytic.append(keff)
-        return jnp.array(keff_analytic)
+                rate= (k_bi * p_zip) / (1 + (b - 1) * k_r_h / k_first)
+                #print(f'rate | {rate}')
+                k_eff_analytical.append(rate)
+        keff_logged = jnp.log10(jnp.array(k_eff_analytical))  # base-10 log
+        return k_eff_analytical,keff_logged
+
 
     def acceleration(self,model_invader,params,mm_energy,conc2):
-        'calculate the keff for invader with no mismatches'
+        """calculates the keff for invader with no mismatches"""
         model_ref = IEL(self.seq, self.inc, model_invader, self.toehold, self.length, conc2)
-        keff_model_ref = model_ref.k_eff(params, mm_energy)
-        keff_seq=self.k_eff(params,mm_energy)
+        keff_model_ref = model_ref.k_eff_th(params, mm_energy)
+        keff_seq=self.k_eff_th(params,mm_energy)
         acceleration = jnp.log10(keff_seq / keff_model_ref)
         return acceleration
 
