@@ -1,6 +1,10 @@
 from IEL import *
 from matplotlib import pyplot as plt
 
+"""
+conc=1e-9)
+params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 7.5e7, 3e6)
+"""
 mismatch_penalties = {
     'A-A': +4.2,  # kcal/mol
     'A-G': +3.9,
@@ -17,24 +21,22 @@ mismatch_penalties = {
     'G-T': +2.5,
     'T-G': +2.5,
 }
-
+"'AATTCCACTCTACTATTAT+CACATCTTATTCACC'"
 sequence = 'TATAATTTAAGGTGAGATGATAATAGTGTAGAATAAGTGG'
-invader =  "ATATTAAATTCCACTCTACTATTATCACATCTTATTCACC"
+invader =  "ATATTAAATTCCACGCTACTATTATCACATCTTATTCACC"
 incumbent= 'AATTCCACTCTACTATTAT+CACATCTTATTCACC'
 perfect_invader="ATATTAAATTCCACTCTACTATTATCACATCTTATTCACC"
 landscape = IEL(sequence,incumbent,invader,
-                toehold=6,Sequence_length=len(sequence), concentration=1)
-
+                toehold=6,Sequence_length=len(sequence), concentration=1e-6)
+#orginal conc =1e-9
 params_srinivas = Params(G_init=9.95, G_bp=1.7, G_p=1.2, G_s=2.6, k_uni=7.5e7, k_bi=3e6)
-
-params_Irmisch= Params(G_init=9.95, G_bp=2.52, G_p=3.5, G_s=7.4, k_uni=7.5e7, k_bi=3e6)
 
 '''IEL Energy Plot'''
 dG = landscape.energy(params_srinivas,mismatch_penalties)
 fig, ax = plt.subplots(figsize=(6, 4))
 ax.set_title("Energy landscape")
-ax.set_xlabel("Position relative to toehold end")
-ax.set_ylabel("dG")
+ax.set_xlabel("Strand Displacement Steps")
+ax.set_ylabel("Free Energy")
 adjusted_x = landscape.state - landscape.toehold
 neg_scale = 1.0
 pos_scale = 0.5
@@ -53,19 +55,6 @@ ax.axvline(x=0, color='gray', linestyle='--', linewidth=0.8)
 plt.tight_layout()
 plt.show()
 
-'''Metropolis rates'''
-dG = landscape.energy(params_srinivas,mismatch_penalties)
-k_plus, k_minus = landscape.metropolis(params_srinivas,mismatch_penalties)
-fig, ax = plt.subplots()
-ax.set_title("Transition rates(metro)")
-ax.set_yscale('log')
-ax.set_xlabel("pos")
-ax.set_ylabel("rate [$s^{-1}$]")
-ax.plot(landscape.state, k_plus, label="$k_i^+$")
-ax.plot(landscape.state, k_minus, label="$k_i^-$")
-ax.legend()
-plt.show()
-
 '''Kawasaki rates'''
 dG = landscape.energy(params_srinivas,mismatch_penalties)
 k_plus, k_minus = landscape.kawasaki(params_srinivas,mismatch_penalties)
@@ -79,27 +68,38 @@ ax.plot(landscape.state, k_minus, label="$k_i^-$")
 ax.legend()
 plt.show()
 
-'''analytical Keff calculated by using formulas'''
-#TODO: fix the analytical graph
-keff_analytical=landscape.k_eff_analytical(params_srinivas)
+'''Metropolis rates'''
+dG = landscape.energy(params_srinivas,mismatch_penalties)
+k_plus, k_minus = landscape.metropolis(params_srinivas,mismatch_penalties)
 fig, ax = plt.subplots()
-ax.set_title("Analytical Keff")
+ax.set_title("Transition rates(metro)")
+ax.set_yscale('log')
 ax.set_xlabel("pos")
-ax.set_ylabel("Rates")
-ax.plot(landscape.state, keff_analytical, 'o-')
+ax.set_ylabel("rate [$s^{-1}$]")
+ax.plot(landscape.state, k_plus, label="$k_i^+$")
+ax.plot(landscape.state, k_minus, label="$k_i^-$")
+ax.legend()
 plt.show()
 
+'''analytical Keff calculated by using formulas'''
+keff_analytical,logged=landscape.k_eff_analytical(params_srinivas)
+plt.figure(figsize=(10, 6))
+plt.plot(jnp.array(logged), marker='o', linestyle='-', color='b')
+plt.title("Keff using MFTP")
+plt.xlabel("Index")
+plt.ylabel("Value")
+plt.grid(True)
+plt.show()
 
-'''MFPT rates Keff'''
-tmfp = [IEL(sequence,incumbent,invader, toehold=th,
-            Sequence_length=15,concentration=1e-6).k_eff(params_srinivas,mismatch_penalties) for th in range(15)]
-fig, ax = plt.subplots()
-ax.set_title("Expected reaction rate constant")
-ax.set_xlabel("Toehold length")
-ax.set_xticks(range(len(tmfp)))
-ax.set_ylabel("$k_{eff}$")
-ax.set_yscale('log')
-ax.plot(tmfp, 'o-')
+'''MFPT rates Keff for toehold'''
+MFTP=landscape.k_eff_th(params_srinivas,mismatch_penalties)
+plt.figure(figsize=(10, 6))
+plt.plot(jnp.log10(MFTP), marker='o', linestyle='-', color='b')
+plt.title("Keff using MFTP")
+plt.xlabel("Index")
+plt.ylabel("Value")
+plt.grid(True)
 plt.show()
 
 '''Acceleration'''
+acceleration=landscape.acceleration(perfect_invader,params_srinivas,mismatch_penalties,1e-6)
