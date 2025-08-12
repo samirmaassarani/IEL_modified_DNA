@@ -1,9 +1,11 @@
 from collections import namedtuple
 import random
-import jax.numpy as jnp
 from jax.lax import scan
 import jax
-import numpy as np
+import jax.numpy as jnp
+from jax import lax
+
+
 jax.config.update("jax_enable_x64", True)
 
 class IEL:
@@ -18,14 +20,16 @@ class IEL:
         self.seq=Sequence
         self.invader=Invader
         self.inc=Incumbent
-        self.G_assoc=3 #Gassoc for incumbents
-        self.G_mm= 9.5 #Gmm in irmisch
-        self.alterations_energy = [0] * (len(self.seq)+1) #total length is equal to seq (0 pos is 1st bp)
-                                                                                  # (39 pos is 40 bp)
+        self.unclean=Incumbent
+        self.G_assoc=2 #Gassoc for incumbents
+        self.alterations_energy = [0] * (len(self.seq)+1)
         self.alterations={}
+        self.inc_1=""
+        self.inc_2=""
 
     def sequence_analyser(self,params,mm_energy):
         G_init, G_bp, G_p, G_s, *_ = params
+        double_inc=False
 
         def check_complement(seq_char, comp_char):
             complements = {'A': 'T', 'T': 'A',
@@ -35,22 +39,39 @@ class IEL:
         "Track positions of nick and missing bp in incumbent"
         for index, char in enumerate(self.inc):
             if char == "+": #Nick
-                self.alterations[index + self.toehold+1]="+"
-        cleaned_incumbent = self.inc.replace("+", "")
-        cleaned_incumbent=cleaned_incumbent[:self.length]
-        self.inc = cleaned_incumbent[:self.length]
+                double_inc =True
+                parts = self.inc.split('+', 1) #split double incumbent
+                self.alterations[index+1+self.toehold]="+"
+
+        "To get the incumbents sequences (single or double incumbent)"
+        if double_inc is True:
+            parts = self.inc.split('+', 1)  # split double incumbent
+            self.inc_1 = parts[0]
+            self.inc_2 = parts[1]
+            #print(f'first part of incumbent: {self.inc_1}, with a length of {len(self.inc_1)}')
+            #print(f'second part of incumbent: {self.inc_2}, with a length of {len(self.inc_2)}')
+
+            cleaned_incumbent = self.inc.replace("+", "")
+            cleaned_incumbent = cleaned_incumbent[:self.length]
+            self.inc = cleaned_incumbent[:self.length]
+
+        else:
+            self.inc_1=self.inc
+            #print(f'single incumbent: {self.inc_1}, with a length of {len(self.inc_1)}')
+
 
         "check for mismatch in first bp, then treat the sequence with shorter Toehold"
-        #TODO: add more cases to handel the positions 1 and for double.
-        if not check_complement(self.seq[0], self.invader[0]):
-            mismatches = f'{self.seq[0]}-{self.invader[0]}'
-            #print(f'mismatches {mismatches}')
-            self.toehold-=1
-            self.seq=self.seq[1:]
-            self.invader=self.invader[1:]
-            self.inc=self.invader[1:]
-            self.length-=1
-            #print(f'self.length {self.length}')
+        mismatch_condition=False
+        while not mismatch_condition:
+            if not check_complement(self.seq[0], self.invader[0]):
+                mismatches = f'{self.seq[0]}-{self.invader[0]}'
+                self.toehold-=1
+                self.seq=self.seq[1:]
+                self.invader=self.invader[1:]
+                self.inc=self.invader[1:]
+                self.length-=1
+            else:
+                mismatch_condition=True
 
         self.state = jnp.concatenate([
             jnp.arange(0, self.toehold + 1),
@@ -66,9 +87,10 @@ class IEL:
                     mismatches= f'{self.seq[index]}-{self.invader[index]}'
                     if mismatches in mm_energy:
                         self.alterations_energy[index+1] += mm_energy[mismatches]
-                        self.alterations[index ]=f'{self.seq[index]}-{self.invader[index]}'
+                        self.alterations[index+1]=f'{self.seq[index]}-{self.invader[index]}-{mm_energy[mismatches]}'
 
         self.alterations = dict(sorted(self.alterations.items()))
+
         print(self.alterations)
         return self.alterations_energy, self.N, self.state
 
@@ -91,7 +113,7 @@ class IEL:
 
         "for toehold energy"
         for positions in range(2, self.toehold + 1):
-            G[positions] = G[positions - 1] - G_bp + self.alterations_energy[positions]
+            G[positions] = G[positions - 1] + G_bp + self.alterations_energy[positions]
 
         "for first half step of branch migration energy"
         current_pos = self.toehold + 1
@@ -132,38 +154,42 @@ class IEL:
         return jnp.array(G)
 
     def zero_toehold_energy(self, params):
-
+        print('zero th case')
         G_init, G_bp, G_p, G_s, *_ = params
         nick_case=False
         nb_inc=0
         Target_bp = 1
         current_pos=4
-        G_init = (G_init - jnp.log(self.concentration))
+        first_inc=False
+        double_inc=False
+
+
         G = self.N * [0]  # G0
-        G[1] = G_bp #bp
+        G[1] = -G_bp #bp
         G[2] = G[1] + G_init #intitian
         G[3]= G[2]+ G_s+G_p
         nick_positions = set(self.alterations)
         'energy levels for full and half steps'
+        "for all half anf full steps in branch migration"
         while current_pos < self.N - 2:
-            "full step (at bp)"
-            if Target_bp in nick_positions:  # for a nick
-                G[current_pos] = G[current_pos - 1] - G_s - G_p + self.alterations_energy[Target_bp] - (
-                    G_init if nb_inc == 0 else self.G_assoc)
-                nick = True
-                nb_inc = 1
-            else:  # intact incumbent
-                G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
-                nick = False
+            G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
+            if Target_bp in nick_positions:
+                # print(f'Gassoc = {self.G_assoc}')
+                G[current_pos] -= self.G_assoc
+                first_inc = True
+                double_inc = True
             current_pos += 1  # to calculate half step
+
             "half step"
             if current_pos < self.N - 2:
-                if nick is True:  # gain G_s and G_assoc
-                    G[current_pos] = G[current_pos - 1] + G_s + self.G_assoc
+                if Target_bp + 1 in nick_positions:
+                    G[current_pos] = G[current_pos - 1] - G_p + G_s
+                elif first_inc is True:
+                    G[current_pos] = G[current_pos - 1] + G_p + G_s
+                    first_inc = False
                 else:
                     G[current_pos] = G[current_pos - 1] + G_s
                 current_pos += 1  # to go back to  full step
-
             Target_bp += 1
 
         'for decoupling at the end'
@@ -173,12 +199,13 @@ class IEL:
         else:
             "nicks thus G_assoc"
             G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
-        G[len(G) - 1] = G[len(G) - 2] - params.G_bp
+        G[len(G) - 1] = G[len(G) - 2] + params.G_bp
         return jnp.array(G)
 
     def metropolis(self, params, mm_energy):
         dG = self.energy(params, mm_energy)
         energy_diff = dG[1:] - dG[:-1]
+
         'Metropolis for unimolecular steps'
         k_plus = params.k_uni * jnp.ones(self.N - 1)
         k_minus = params.k_uni * jnp.ones(self.N - 1)
@@ -191,10 +218,12 @@ class IEL:
 
         # Bimolecular first step (as paper describes)
         if self.toehold == 0:
-            fraying_penalty = params.G_bp / RT
+            fraying_penalty = abs(params.G_bp) / RT
             fraying_factor = 2.0 * jnp.exp(-fraying_penalty)
             k_plus = k_plus.at[0].set(params.k_bi * self.concentration * fraying_factor) #fraying rate
-            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
+            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(-energy_diff[0]))
+
+
         else:
             k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
             k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
@@ -208,72 +237,58 @@ class IEL:
         k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])
         k_minus = jnp.concatenate([jnp.zeros(1), k_minus])
 
-        return k_plus, k_minus
+        '''Koff for early dissociation of incumbent '''
+        koff = []
+        keff_inc_1=jnp.zeros(len(self.inc_1))
+        keff_inc_2 = jnp.zeros(len(self.inc_2))
 
-    def metropolis_new(self, params, mm_energy):
-        dG = self.energy(params, mm_energy)
-        energy_diff = dG[1:] - dG[:-1]
-        'Metropolis for unimolecular steps'
-        k_plus = params.k_uni * jnp.ones(self.N - 1)
-        k_minus = params.k_uni * jnp.ones(self.N - 1)
 
-        uphill_forward = energy_diff > 0
-        uphill_backward = energy_diff < 0
+        for i in range (len(keff_inc_1)):
+            remaining_bps= (len(keff_inc_1)-i)
+            k_off_calculated= params.k_uni * jnp.exp(-remaining_bps * abs(params.G_bp) / RT)
+            koff.append(k_off_calculated)
 
-        k_plus = k_plus.at[uphill_forward].mul(jnp.exp(-energy_diff[uphill_forward]))
-        k_minus = k_minus.at[uphill_backward].mul(jnp.exp(energy_diff[uphill_backward]))
+        for i in range(len(keff_inc_2)):
+            remaining_bps = (len(keff_inc_2) - i)
+            k_off_calculated = params.k_uni * jnp.exp(-remaining_bps * abs(params.G_bp) / RT)
+            koff.append(k_off_calculated)
 
-        # Bimolecular first step (as paper describes)
-        if self.toehold == 0:
-            fraying_penalty = params.G_bp / RT
-            fraying_factor = 2.0 * jnp.exp(-fraying_penalty)
-            k_plus = k_plus.at[0].set(params.k_bi * self.concentration * fraying_factor) #fraying rate
-            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
-        else:
-            k_plus = k_plus.at[0].set(params.k_bi * self.concentration)
-            k_minus = k_minus.at[0].set(params.k_bi * jnp.exp(energy_diff[0]))
+        k_off_full = jnp.zeros_like(k_plus)
 
-        # Final dissociation
-        if self.N > self.toehold + 1:
-            k_plus = k_plus.at[-1].set(params.k_uni)
-            k_minus = k_minus.at[-1].set(0.0)  # Irreversible
 
-        # Pad for boundary conditions
-        k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])
-        k_minus = jnp.concatenate([jnp.zeros(1), k_minus])
+        koff = jnp.array(koff)  # Ensure koff is a JAX array
 
-        '''Koff for early dissociation'''
-        k_off = jnp.zeros(self.N)  # Initialize all states to 0
+        added_zeros = jnp.zeros_like(jnp.array(koff))
+        # Stack and reshape to interleave
+        interleaved = jnp.stack((added_zeros, koff)).T.flatten()
 
-        # Full-step indices: Skip half-steps by stepping in increments of 2
-        full_step_indices = self.toehold + 1 + 2 * jnp.arange(self.length)
-        remaining_bps = self.length - jnp.arange(self.length)
+        final=jnp.zeros(1)
+        toehold=jnp.zeros(self.toehold+1)
 
-        # Assign k_off only to full-step states (Eq. 7)
-        k_off = k_off.at[full_step_indices].set(
-            params.k_uni * jnp.exp(-remaining_bps * params.G_bp / RT)
-        )
+        full = jnp.concatenate([toehold, interleaved,final])
 
-        return k_plus, k_minus, k_off
+
+
+        return k_plus, k_minus, full
 
     def kawasaki(self, params,mm_energy):
-        dG = self.energy(params,mm_energy)  # RT-scaled energies
+        dG = self.energy(params,mm_energy)
         energy_diff = dG[1:] - dG[:-1]
 
-        # Kawasaki rule: symmetric rates
+        "Kawasaki rule: symmetric rates"
         k_plus = params.k_uni * jnp.exp(-energy_diff/2)  # Forward rate
         k_minus = params.k_uni * jnp.exp(energy_diff/2)  # Backward rate
 
-        # First transition
+        "First transition"
         if self.toehold == 0:
             k_plus = k_plus.at[0].set(0)
             k_minus = k_minus.at[0].set(0)
 
-        # Last transition: Ensure backward rate is physical
+        "Last transition: Ensure backward rate is physical"
         k_plus = k_plus.at[-1].set(params.k_bi)
         k_minus = k_minus.at[-1].set(params.k_bi * jnp.exp(dG[-2] - dG[-1]))
 
-        # Pad with zeros for boundary conditions
+        "Pad with zeros for boundary conditions"
         k_plus = jnp.concatenate([k_plus, jnp.zeros(1)])
         k_minus = jnp.concatenate([jnp.zeros(1), k_minus])
         return k_plus, k_minus
@@ -317,10 +332,9 @@ class IEL:
         ks = jnp.stack(self.transitions(params,mm_energy)).T
 
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
-        #print(f'occupancy: {jnp.concatenate([jnp.flip(ps / ps.sum()), jnp.zeros(1)]) }')
         return jnp.concatenate([jnp.flip(ps / ps.sum()), jnp.zeros(1)]) #Normalization & Formatting
 
-    def time_mfp(self, params,mm_energy):
+    def time_mfp_old(self, params,mm_energy):
         def calculate_passage_probability(p, k):
             kp, km = k
             next_p = 1 / kp + km / kp * p
@@ -329,70 +343,89 @@ class IEL:
         _, ps = scan(calculate_passage_probability, 0, jnp.flip(ks, 0)[1:])
         return ps.sum()
 
-    def calculate_mfpt(self,params,mm):
-        #TODO:fix the koff and mfpt and change from moving toehold to fixed with mm moving
-        k_plus,k_minus,k_off=self.metropolis_new(params,mm)
-        print(k_plus,k_minus,k_off)
-        N = len(k_plus)  # Number of steps (0 to N)
-        p = np.zeros(N + 1)  # p_n / j_{N-1}
-        j = np.zeros(N)  # j_n / j_{N-1} (indices 0 to N-1)
+    def time_mftp_dissociation(self, params, mm_energy):
+        k_plus, k_minus, k_off = self.metropolis(params, mm_energy)
 
-        # Boundary conditions
-        p[N] = 0  # Absorbing at n=N
-        j[N - 1] = 1  # Normalization
+        # Keep original k_off
+        N = len(k_off) - 1  # Number of positions (0 to N)
 
-        # Backward recursion
-        for n in range(N - 1, -1, -1):
-            if n == N - 1:
-                p[n] = 1 / k_plus[n]
-            else:
-                p[n] = (1 / k_plus[n]) * j[n] + (k_minus[n + 1] / k_plus[n]) * p[n + 1]
+        # Initialize arrays
+        p_over_j = jnp.zeros(N + 1)  # p_n / j_{N-1}
+        j_ratio = jnp.zeros(N)  # j_n / j_{N-1}
 
-            if n < N - 1:
-                j[n] = j[n + 1] + k_off[n + 1] * p[n + 1]
+        # Boundary conditions (as before)
+        p_over_j = p_over_j.at[N].set(0.0)  # p_N = 0 (absorbing boundary)
+        p_over_j = p_over_j.at[N - 1].set(1 / k_plus[N - 1])
+        j_ratio = j_ratio.at[N - 1].set(1.0)
 
-        # Compute MFPT
-        print(f'k_plus[0] {k_plus[0]},p[0] {p[0]}')
-        j0 = k_plus[0] * p[0]
-        print(j0)
-        T_pass = (j[N - 1] / j0) * np.sum(p)
-        print(T_pass)
+        # Recursively calculate from N-2 down to 0
+        def step(n, carry):
+            p_over_j, j_ratio = carry
+
+            # Calculate j_n / j_{N-1} (equation 6)
+            new_j_ratio = 1 + k_off[n + 1] * p_over_j[n + 1]
+            j_ratio = j_ratio.at[n].set(new_j_ratio)
+
+            # Calculate p_n / j_{N-1} (equation 5)
+            new_p_over_j = (1 / k_plus[n]) * new_j_ratio + (k_minus[n + 1] / k_plus[n]) * p_over_j[n + 1]
+            p_over_j = p_over_j.at[n].set(new_p_over_j)
+
+            return (p_over_j, j_ratio)
+
+        # Iterate from N-2 down to 0
+        p_over_j, j_ratio = lax.fori_loop(
+            0,
+            N - 1,
+            lambda i, carry: step(N - 2 - i, carry),
+            (p_over_j, j_ratio)
+        )
+
+        # Calculate mean first passage time (equation 7)
+        j_N1_over_j0 = j_ratio[0]  # j_{N-1} / j_0
+        sum_p_over_j = jnp.sum(p_over_j)
+        T_pass = j_N1_over_j0 * sum_p_over_j
+
         return T_pass
 
-    def k_eff_th(self,params,mm_energy):
+    def rate(self,params,mm_energy):
+        Tpass=self.time_mftp_dissociation(params, mm_energy)
+        rate=1/Tpass
+        return rate
+
+    def k_eff_th(self, params, mm_energy, incumbent):
+        """calculates the keff rates for a different toehold"""
         rates=[]
         for th in range(15):
-            if th > self.toehold: #toehold is less than given toehold
-                'adds bp to incumbent to match sequence'
-                index=th - self.toehold
-                new_inc=self.inc[index:]
-                model_0 = IEL(self.seq, new_inc,self.invader, th, self.length, self.concentration)
-                mftp_model= model_0.time_mfp(params,mm_energy)
-
-            else:    #toehold is greater than given toehold
-                'removed bp from incumbent to match sequence'
-                new_inc=self.invader[th:self.toehold]+self.inc
-                model_0 = IEL(self.seq, new_inc, self.invader, th, self.length, self.concentration)
-                mftp_model= model_0.time_mfp(params,mm_energy)
-
+            model_0 = IEL(self.seq, incumbent[th],self.invader, th, self.length, self.concentration)
+            mftp_model= model_0.time_mftp_dissociation(params,mm_energy)
             rate = 1/mftp_model
             rates.append(rate)
-            print(f'{th} | {rate}')
+
         return jnp.array(rates)
 
-    def k_eff_mm(self, params, mm_energy, sequence_set):
+    def k_eff_th_old(self, params, mm_energy, incumbent):
+        """calculates the keff rates for a different toehold"""
+        rates=[]
+        for th in range(15):
+            model_0 = IEL(self.seq, incumbent[th],self.invader, th, self.length, self.concentration)
+            mftp_model= model_0.time_mfp_old(params,mm_energy)
+            rate = 1/mftp_model
+            rates.append(rate)
+
+        return jnp.array(rates)
+
+    def k_eff_mm(self, params, mm_energy, sequence_set,inc):
+        """calculates the keff rates for a fixed toehold but different mm position"""
         rates = []
-        positions = list(range(1, len(sequence_set) + 1))
-        print(sequence_set)# auto-detect length
 
         for i, new_seq in enumerate(sequence_set):
-            mismatch_pos = positions[i]
-            model = IEL(self.seq, self.inc, new_seq, 6, self.length, self.concentration)
-            mfpt = model.time_mfp(params, mm_energy)
+
+            model = IEL(self.seq, inc, new_seq, 6, self.length, self.concentration)
+
+            mfpt = model.time_mftp_dissociation(params, mm_energy)
             rate = 1 / mfpt
             rates.append(rate)
-            print(f"Mismatch at pos {mismatch_pos} | MFPT = {mfpt} | Rate = {rate}")
-        rates=jnp.log10(jnp.array(rates))
+            #print(f"Mismatch at pos {positions[i]} | MFPT = {mfpt} | Rate = {rate} | Rate_log10 = {jnp.log10(rate)}")
         return rates
 
     def k_eff_analytical(self, params):
@@ -434,11 +467,26 @@ class IEL:
                 k_r_h = jnp.exp(-(h - 1) * G_bp / RT) / (1 / k_uni + 1 / k_r_1)
 
                 rate= (k_bi * p_zip) / (1 + (b - 1) * k_r_h / k_first)
-                #print(f'rate | {rate}')
+                #print(f'rate | {rate} | log10 {jnp.log10(rate)}')
                 k_eff_analytical.append(rate)
-        keff_logged = jnp.log10(jnp.array(k_eff_analytical))  # base-10 log
-        return k_eff_analytical,keff_logged
+        keff_analytical_logged = jnp.log10(jnp.array(k_eff_analytical))  # base-10 log
 
+        return keff_analytical_logged
+
+    def nick_position(self,params,mm,sequences):
+        sequences=sequences
+        Mftp=[]
+        Rate=[]
+
+        for i in range(len(sequences)):
+            nick_model=IEL(self.seq, sequences[i], self.invader, self.toehold, self.length, self.concentration)
+            mftp=nick_model.time_mftp_dissociation(params,mm)
+            Mftp.append(mftp)
+            rate=1/mftp
+
+            Rate.append(rate)
+
+        return Rate
 
     def acceleration(self,model_invader,params,mm_energy,conc2):
         """calculates the keff for invader with no mismatches"""
@@ -448,8 +496,22 @@ class IEL:
         acceleration = jnp.log10(keff_seq / keff_model_ref)
         return acceleration
 
-    def get_nn_energy(self, nn_params):
+    def get_nn_energy(self):
         nn_seq = []
+        nn_params = {
+            # Watson-Crick pairs
+            'AA/TT': -1.00, 'AT/TA': -0.88, 'TA/AT': -0.58, 'CA/GT': -1.45,
+            'GT/CA': -1.44, 'CT/GA': -1.28, 'GA/CT': -1.30, 'CG/GC': -2.17,
+            'GC/CG': -2.24, 'GG/CC': -1.84,
+
+            # Mismatched pairs (positive values = destabilizing)
+            'AA/TG': +1.2, 'AT/TG': +1.2, 'AG/TT': +1.0, 'AG/TC': +1.5,
+            'AC/TT': +2.3, 'AC/TG': +0.7, 'GA/CT': +1.3, 'GT/CA': +1.4,
+            'GG/CT': +3.1, 'GG/CC': +0.6, 'GC/CA': +1.9, 'GC/CT': +0.1,
+            'CA/GG': +1.9, 'CT/GG': +0.1, 'CG/GA': +1.1, 'CG/GC': +0.4,
+            'CC/GA': +0.6, 'CC/GG': +3.1,
+
+        }
 
         for pos in range(self.length):
             if pos >= self.length - 1:
@@ -465,11 +527,24 @@ class IEL:
         print(f'nn_seq of length {len(nn_seq)}')
         return nn_seq
 
-    def energy_rt_nn(self, params, mm_energy, nn_params):
-        #TODO: fix the NN array and end position
+    def energy_nn(self, params, mm_energy):
         G_init, G_bp, G_p, G_s, G_mm,G_nick, *_ = params
+        nn_params = {
+            # Watson-Crick pairs
+            'AA/TT': -1.00, 'AT/TA': -0.88, 'TA/AT': -0.58, 'CA/GT': -1.45,
+            'GT/CA': -1.44, 'CT/GA': -1.28, 'GA/CT': -1.30, 'CG/GC': -2.17,
+            'GC/CG': -2.24, 'GG/CC': -1.84,
+
+            # Mismatched pairs (positive values = destabilizing)
+            'AA/TG': +1.2, 'AT/TG': +1.2, 'AG/TT': +1.0, 'AG/TC': +1.5,
+            'AC/TT': +2.3, 'AC/TG': +0.7, 'GA/CT': +1.3, 'GT/CA': +1.4,
+            'GG/CT': +3.1, 'GG/CC': +0.6, 'GC/CA': +1.9, 'GC/CT': +0.1,
+            'CA/GG': +1.9, 'CT/GG': +0.1, 'CG/GA': +1.1, 'CG/GC': +0.4,
+            'CC/GA': +0.6, 'CC/GG': +3.1,
+
+        }
         self.alterations_energy, self.N, self.state = self.sequence_analyser(params, mm_energy)
-        nn_seq =self.get_nn_energy(nn_params)
+        nn_seq =self.get_nn_energy
         Target_bp = self.toehold + 1
         BP_pos=0
         Nick = False
@@ -480,12 +555,12 @@ class IEL:
             return jnp.array(G)
 
         'Initiation'
-        G[1] = (params.G_init - jnp.log(self.concentration)) / RT
+        G[1] = params.G_init - jnp.log(self.concentration)
 
         "for toehold energy with NN parameters"
         for positions in range(2, self.toehold + 1):
             print(f'{nn_seq[BP_pos][1]}, at {BP_pos}')
-            G[positions] = G[positions - 1] + self.alterations_energy[positions]/ RT +nn_seq[BP_pos][1]
+            G[positions] = G[positions - 1] + self.alterations_energy[positions] +nn_seq[BP_pos][1]
             BP_pos += 1
             print(f'position in toehold {positions- 1}')
 
@@ -493,7 +568,7 @@ class IEL:
         current_pos = self.toehold + 1
         if current_pos < self.N:
             print(f'{nn_seq[BP_pos][1]}, at {BP_pos}')
-            G[current_pos] = G[current_pos - 1] + G_s / RT+ G_p/ RT +nn_seq[BP_pos][1]
+            G[current_pos] = G[current_pos - 1] + G_s + G_p +nn_seq[BP_pos][1]
             BP_pos += 1
             print(f'position in first transition step {current_pos-1}')
             current_pos += 1
@@ -503,14 +578,14 @@ class IEL:
         while current_pos < self.N - 2:
             "full step (at bp)"
             if Target_bp in nick_positions:  # for a nick
-                G[current_pos] = (G[current_pos - 1] - G_s/ RT - self.G_assoc/ RT +
-                                  self.alterations_energy[Target_bp]/ RT +nn_seq[BP_pos][1] )
+                G[current_pos] = (G[current_pos - 1] - G_s - self.G_assoc +
+                                  self.alterations_energy[Target_bp]+nn_seq[BP_pos][1] )
                 print(f'{nn_seq[BP_pos][1]}, at {BP_pos}')
                 BP_pos += 1
                 print(f'position in half step {Target_bp}')
                 Nick = True
             else:  # intact incumbent
-                G[current_pos] = (G[current_pos - 1] - G_s/ RT + self.alterations_energy[Target_bp] / RT
+                G[current_pos] = (G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
                                                                 + nn_seq[BP_pos][1])
                 print(f'{nn_seq[BP_pos][1]}, at {BP_pos}')
                 BP_pos += 1
@@ -520,9 +595,9 @@ class IEL:
             "half step"
             if current_pos < self.N - 2:
                 if Nick is True:  # gain G_s and G_assoc
-                    G[current_pos] = (G[current_pos - 1] + G_s/ RT + self.G_assoc/ RT )
+                    G[current_pos] = (G[current_pos - 1] + G_s + self.G_assoc )
                 else:
-                    G[current_pos] = (G[current_pos - 1] + G_s/ RT )
+                    G[current_pos] = (G[current_pos - 1] + G_s )
                 current_pos += 1  # to go back to  full step
             Target_bp += 1
 
