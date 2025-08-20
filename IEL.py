@@ -26,10 +26,14 @@ class IEL:
         self.alterations={}
         self.inc_1=""
         self.inc_2=""
+        self.nick_position=0
 
-    def sequence_analyser(self,params,mm_energy):
+    def sequence_analyser(self, params, mm_energy):
+        #TODO: to improve efficiency
+
         G_init, G_bp, G_p, G_s, *_ = params
-        double_inc=False
+        double_inc = False
+
 
         def check_complement(seq_char, comp_char):
             complements = {'A': 'T', 'T': 'A',
@@ -38,172 +42,116 @@ class IEL:
 
         "Track positions of nick and missing bp in incumbent"
         for index, char in enumerate(self.inc):
-            if char == "+": #Nick
-                double_inc =True
-                parts = self.inc.split('+', 1) #split double incumbent
-                self.alterations[index+1+self.toehold]="+"
+            if char == "+":  # Nick
+                double_inc = True
+                parts = self.inc.split('+', 1)  # split double incumbent
+                self.alterations[index + 1 + self.toehold] = "+"
 
         "To get the incumbents sequences (single or double incumbent)"
         if double_inc is True:
             parts = self.inc.split('+', 1)  # split double incumbent
             self.inc_1 = parts[0]
             self.inc_2 = parts[1]
-            #print(f'first part of incumbent: {self.inc_1}, with a length of {len(self.inc_1)}')
-            #print(f'second part of incumbent: {self.inc_2}, with a length of {len(self.inc_2)}')
+            # print(f'first part of incumbent: {self.inc_1}, with a length of {len(self.inc_1)}')
+            # print(f'second part of incumbent: {self.inc_2}, with a length of {len(self.inc_2)}')
 
             cleaned_incumbent = self.inc.replace("+", "")
             cleaned_incumbent = cleaned_incumbent[:self.length]
             self.inc = cleaned_incumbent[:self.length]
 
         else:
-            self.inc_1=self.inc
-            #print(f'single incumbent: {self.inc_1}, with a length of {len(self.inc_1)}')
-
+            self.inc_1 = self.inc
+            # print(f'single incumbent: {self.inc_1}, with a length of {len(self.inc_1)}')
 
         "check for mismatch in first bp, then treat the sequence with shorter Toehold"
-        mismatch_condition=False
+        mismatch_condition = False
         while not mismatch_condition:
             if not check_complement(self.seq[0], self.invader[0]):
                 mismatches = f'{self.seq[0]}-{self.invader[0]}'
-                self.toehold-=1
-                self.seq=self.seq[1:]
-                self.invader=self.invader[1:]
-                self.inc=self.invader[1:]
-                self.length-=1
+                self.toehold -= 1
+                self.seq = self.seq[1:]
+                self.invader = self.invader[1:]
+                self.inc = self.invader[1:]
+                self.length -= 1
             else:
-                mismatch_condition=True
+                mismatch_condition = True
 
         self.state = jnp.concatenate([
             jnp.arange(0, self.toehold + 1),
             jnp.arange(self.toehold + 0.5, self.length + 0.5, 0.5),
             jnp.array([self.length + 0.5])
         ])
-        self.N =len(self.state)
+        self.N = len(self.state)
 
         "checks for Mismatches in sequence and complementary invader"
         for index, value in enumerate(self.seq):
-                "Check invader mismatch"
-                if not check_complement(self.seq[index], self.invader[index]):
-                    mismatches= f'{self.seq[index]}-{self.invader[index]}'
-                    if mismatches in mm_energy:
-                        self.alterations_energy[index+1] += mm_energy[mismatches]
-                        self.alterations[index+1]=f'{self.seq[index]}-{self.invader[index]}-{mm_energy[mismatches]}'
+            "Check invader mismatch"
+            if not check_complement(self.seq[index], self.invader[index]):
+                mismatches = f'{self.seq[index]}-{self.invader[index]}'
+                if mismatches in mm_energy:
+                    self.alterations_energy[index + 1] += mm_energy[mismatches]
+                    self.alterations[index + 1] = f'{self.seq[index]}-{self.invader[index]}-{mm_energy[mismatches]}'
 
         self.alterations = dict(sorted(self.alterations.items()))
 
         print(self.alterations)
         return self.alterations_energy, self.N, self.state
 
-    def energy(self, params, mm_energy):
+    def energy_landscape(self,params,mm_energy):
         G_init, G_bp, G_p, G_s, *_ = params
         self.alterations_energy, self.N, self.state = self.sequence_analyser(params, mm_energy)
-        Target_bp = self.toehold + 1
-        first_inc=False
-        double_inc=False
-
-        G_init = (G_init - jnp.log(self.concentration))
-
         G = self.N * [0]
-        if self.toehold == 0:
-            G = self.zero_toehold_energy(params)
-            return jnp.array(G)
 
-        # Initiation
-        G[1] = G_init + self.alterations_energy[1]
 
-        "for toehold energy"
-        for positions in range(2, self.toehold + 1):
-            G[positions] = G[positions - 1] + G_bp + self.alterations_energy[positions]
+        if self.toehold == 0: #zero-toehold case
+            G[1] = +abs(G_bp)  # fraying Gbp
+            G[2] = G[1] + G_init
+            G[3] = G[2] + G_s + G_p
+            current_pos = 4
 
-        "for first half step of branch migration energy"
-        current_pos = self.toehold + 1
-        if current_pos < self.N:
-            G[current_pos] = G[current_pos - 1] + G_s + G_p
+        else: #toehold > 0
+            G[1] = (G_init - jnp.log(self.concentration)) + self.alterations_energy[1]
+            "for toehold energy"
+            for positions in range(2, self.toehold + 1):
+                G[positions] = G[positions - 1] + G_bp + self.alterations_energy[positions] #base pairing for toehold
+
+            "for first half step of branch migration energy"
+            current_pos = self.toehold + 1
+            if current_pos < self.N:
+                G[current_pos] = G[current_pos - 1] + G_s + G_p #apply dangling end for first branch migration
+                current_pos += 1
+
+        target_bp = self.toehold + 1
+        while current_pos<self.N-2:
+
+            if target_bp>self.length:
+                break
+
+            "full step"
+            G[current_pos]= G[current_pos-1] - G_s+ self.alterations_energy[target_bp]
             current_pos += 1
-
-        nick_positions = set(self.alterations)
-
-
-        "for all half anf full steps in branch migration"
-        while current_pos < self.N - 2:
-            G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
-            if Target_bp in nick_positions:
-                #print(f'Gassoc = {self.G_assoc}')
-                G[current_pos]-= self.G_assoc
-                first_inc = True
-                double_inc=True
-            current_pos += 1 #to calculate half step
+            target_bp += 1
 
             "half step"
-            if current_pos < self.N - 2:
-                if Target_bp+1 in nick_positions:
-                    G[current_pos] = G[current_pos - 1] - G_p + G_s
-                elif first_inc is True:
-                    G[current_pos] = G[current_pos - 1] + G_p + G_s
-                    first_inc = False
-                else:
-                    G[current_pos] = G[current_pos - 1] + G_s
-                current_pos += 1 #to go back to  full step
-            Target_bp += 1
+            if target_bp==self.nick_position:
+                G[current_pos] =G[current_pos-1]+G_s -G_p #removal of dangling-end
 
-        if double_inc:
-            G[self.N - 2] = G[self.N - 3] - self.G_assoc-G_s
-        else:
-            G[self.N - 2] = G[self.N - 3] - G_init-G_s
-        G[self.N - 1] = G[self.N - 2] - G_p
-        return jnp.array(G)
+            elif target_bp-1== self.nick_position:
+                G[current_pos] = G[current_pos - 1] + G_s +G_p #addition of dangling-end
 
-    def zero_toehold_energy(self, params):
-        print('zero th case')
-        G_init, G_bp, G_p, G_s, *_ = params
-        nick_case=False
-        nb_inc=0
-        Target_bp = 1
-        current_pos=4
-        first_inc=False
-        double_inc=False
+            else:
+                G[current_pos] = G[current_pos - 1] + G_s #sawtooth amplitude
+
+            current_pos +=1
 
 
-        G = self.N * [0]  # G0
-        G[1] = -G_bp #bp
-        G[2] = G[1] + G_init #intitian
-        G[3]= G[2]+ G_s+G_p
-        nick_positions = set(self.alterations)
-        'energy levels for full and half steps'
-        "for all half anf full steps in branch migration"
-        while current_pos < self.N - 2:
-            G[current_pos] = G[current_pos - 1] - G_s + self.alterations_energy[Target_bp]
-            if Target_bp in nick_positions:
-                # print(f'Gassoc = {self.G_assoc}')
-                G[current_pos] -= self.G_assoc
-                first_inc = True
-                double_inc = True
-            current_pos += 1  # to calculate half step
+        G[self.N - 2] = G[self.N - 3] - self.G_assoc - G_s #dissoctaion of incumbent
+        G[self.N - 1] = G[self.N - 2] - G_p #removal of dangling end penalty
 
-            "half step"
-            if current_pos < self.N - 2:
-                if Target_bp + 1 in nick_positions:
-                    G[current_pos] = G[current_pos - 1] - G_p + G_s
-                elif first_inc is True:
-                    G[current_pos] = G[current_pos - 1] + G_p + G_s
-                    first_inc = False
-                else:
-                    G[current_pos] = G[current_pos - 1] + G_s
-                current_pos += 1  # to go back to  full step
-            Target_bp += 1
-
-        'for decoupling at the end'
-        if not nick_case:
-            "no nicks thus Ginit"
-            G[len(G) - 2] = G[len(G) - 3] - params.G_init
-        else:
-            "nicks thus G_assoc"
-            G[len(G) - 2] = G[len(G) - 3] - self.G_assoc
-        G[len(G) - 1] = G[len(G) - 2] + params.G_bp
         return jnp.array(G)
 
     def metropolis(self, params, mm_energy):
-        dG = self.energy(params, mm_energy)
+        dG = self.energy_landscape(params, mm_energy)
         energy_diff = dG[1:] - dG[:-1]
 
         'Metropolis for unimolecular steps'
@@ -272,7 +220,7 @@ class IEL:
         return k_plus, k_minus, full
 
     def kawasaki(self, params,mm_energy):
-        dG = self.energy(params,mm_energy)
+        dG = self.energy_landscape(params,mm_energy)
         energy_diff = dG[1:] - dG[:-1]
 
         "Kawasaki rule: symmetric rates"
@@ -392,40 +340,30 @@ class IEL:
         rate=1/Tpass
         return rate
 
-    def k_eff_th(self, params, mm_energy, incumbent):
+    def k_eff_th_error(self, params, mm_energy, incumbent):
         """calculates the keff rates for a different toehold"""
         rates=[]
         for th in range(15):
             model_0 = IEL(self.seq, incumbent[th],self.invader, th, self.length, self.concentration)
+            print(incumbent[th])
             mftp_model= model_0.time_mftp_dissociation(params,mm_energy)
             rate = 1/mftp_model
             rates.append(rate)
 
         return jnp.array(rates)
 
-    def k_eff_th_old(self, params, mm_energy, incumbent):
-        """calculates the keff rates for a different toehold"""
-        rates=[]
-        for th in range(15):
-            model_0 = IEL(self.seq, incumbent[th],self.invader, th, self.length, self.concentration)
-            mftp_model= model_0.time_mfp_old(params,mm_energy)
-            rate = 1/mftp_model
-            rates.append(rate)
-
-        return jnp.array(rates)
+    def k_eff_th(self, params, mm_energy,th):
+        th_rate_keff=self.rate(params, mm_energy)
+        print(f'TH {th} | {th_rate_keff}')
+        return jnp.array(th_rate_keff)
 
     def k_eff_mm(self, params, mm_energy, sequence_set,inc):
         """calculates the keff rates for a fixed toehold but different mm position"""
         rates = []
-
         for i, new_seq in enumerate(sequence_set):
-
-            model = IEL(self.seq, inc, new_seq, 6, self.length, self.concentration)
-
-            mfpt = model.time_mftp_dissociation(params, mm_energy)
-            rate = 1 / mfpt
+            model = IEL(self.seq, inc, new_seq, self.toehold, self.length, self.concentration)
+            rate=model.rate(params, mm_energy)
             rates.append(rate)
-            #print(f"Mismatch at pos {positions[i]} | MFPT = {mfpt} | Rate = {rate} | Rate_log10 = {jnp.log10(rate)}")
         return rates
 
     def k_eff_analytical(self, params):
@@ -469,24 +407,9 @@ class IEL:
                 rate= (k_bi * p_zip) / (1 + (b - 1) * k_r_h / k_first)
                 #print(f'rate | {rate} | log10 {jnp.log10(rate)}')
                 k_eff_analytical.append(rate)
-        keff_analytical_logged = jnp.log10(jnp.array(k_eff_analytical))  # base-10 log
 
-        return keff_analytical_logged
 
-    def nick_position(self,params,mm,sequences):
-        sequences=sequences
-        Mftp=[]
-        Rate=[]
-
-        for i in range(len(sequences)):
-            nick_model=IEL(self.seq, sequences[i], self.invader, self.toehold, self.length, self.concentration)
-            mftp=nick_model.time_mftp_dissociation(params,mm)
-            Mftp.append(mftp)
-            rate=1/mftp
-
-            Rate.append(rate)
-
-        return Rate
+        return k_eff_analytical
 
     def acceleration(self,model_invader,params,mm_energy,conc2):
         """calculates the keff for invader with no mismatches"""
