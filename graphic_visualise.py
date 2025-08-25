@@ -656,6 +656,50 @@ class Visualizer:
 
         rate_dif = jnp.array([-mm_rate + perfect_rate for mm_rate in mm_rates])
 
+        def double_mm_pyramid_plot(rate_dif):
+            # Create 10x10 matrix filled with NaN
+            matrix = np.full((10, 10), np.nan)
+
+            # Fill upper triangle with your rate_dif data
+            idx = 0
+            for i in range(10):
+                for j in range(i + 1, 10):
+                    if idx < len(rate_dif):
+                        matrix[i, j] = rate_dif[idx]
+                        idx += 1
+
+            # Create the plot
+            fig, ax = plt.subplots(figsize=(10, 8))
+
+            # Plot heatmap (only upper triangle will show)
+            im = plt.imshow(matrix, cmap='Blues', aspect='equal')
+
+            # Add labels for each cell
+            idx = 0
+            for i in range(10):
+                for j in range(i + 1, 10):
+                    if idx < len(rate_dif):
+                        plt.text(j, i, f'{rate_dif[idx]:.2f}',
+                                 ha='center', va='center', fontsize=8)
+                        idx += 1
+
+            # Labels and formatting
+            plt.xlabel('Second Mismatch Position')
+            plt.ylabel('First Mismatch Position')
+            plt.title('Double Mismatch Rate Differences (Pyramid)')
+            plt.colorbar(im, label='Rate Difference')
+
+            # Set tick labels
+            positions = [f'Pos {i + 1}' for i in range(10)]
+            plt.xticks(range(10), positions, rotation=45)
+            plt.yticks(range(10), positions)
+
+            plt.tight_layout()
+            return fig
+
+        fig = double_mm_pyramid_plot(jnp.log10(rate_dif))
+        plt.show()
+
         def create_pyramid_heatmap(data, title, cbar_label, cmap="Blues", fmt=".1e"):
             """Create pyramid heatmap for double mismatch data"""
             import seaborn as sns
