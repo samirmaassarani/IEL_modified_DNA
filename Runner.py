@@ -1,4 +1,4 @@
-from visual import *
+from graphic_visualise import *
 
 avg_mismatch_penalties = {
     'A-A': +3.725,  # kcal/mol
@@ -40,9 +40,7 @@ params_srinivas = Params(G_init=9.95, G_bp=-1.7, G_p=1.2, G_s=2.6, k_uni=7.5e7, 
 
 visual_plot=Visualizer(params_experimental,avg_mismatch_penalties)
 
-
-visual_plot.nn_iel()
-
+visual_plot.double_mm_plot()
 visual_plot.iel_plot()
 visual_plot.iel_zero_toehold_plot()
 visual_plot.iel_plot_single_mm()
@@ -50,5 +48,6 @@ visual_plot.iel_double_inc_plot()
 visual_plot.kp_km_koff_plot_double()
 visual_plot.keff_vs_analytical()
 visual_plot.nick_plot()
-visual_plot.heat_map_single_mm()
-visual_plot.heat_map_double_mm()
+visual_plot.single_mm_plot()
+
+visual_plot.nn_iel()
