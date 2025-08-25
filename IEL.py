@@ -4,6 +4,8 @@ from jax.lax import scan
 import jax
 import jax.numpy as jnp
 from jax import lax
+
+
 jax.config.update("jax_enable_x64", True)
 
 class IEL:
@@ -25,9 +27,6 @@ class IEL:
         self.inc_1=""
         self.inc_2=""
         self.nick_position=0
-
-    # TODO: fix the Gbp misconception (delta Gbp is not as Gbp)
-    # TODO: further improve the Nearest Neighbour model as it was done at last minute
 
     def sequence_analyser(self, params, mm_energy):
         G_init, G_bp, G_p, G_s, *_ = params
@@ -327,6 +326,15 @@ class IEL:
         rate=1/Tpass
         return rate
 
+    def k_eff_mm(self, params, mm_energy, sequence_set,inc):
+        """calculates the keff rates for a fixed toehold but different mm position"""
+        rates = []
+        for i, new_seq in enumerate(sequence_set):
+            model = IEL(self.seq, inc, new_seq, self.toehold, self.length, self.concentration)
+            rate=model.rate(params, mm_energy)
+            rates.append(rate)
+        return rates
+
     def k_eff_analytical(self, params):
         k_bi = params.k_bi
         k_uni = params.k_uni
@@ -372,7 +380,7 @@ class IEL:
 
         return k_eff_analytical
 
-    def get_nn_energy(self,params,mm_energy):
+    def get_nn_energy(self, params, mm_energy):
 
         G_init, G_bp, G_p, G_s, *_ = params
         self.alterations_energy, self.N, self.state = self.sequence_analyser(params, mm_energy)
@@ -405,13 +413,12 @@ class IEL:
                 f"{self.seq[i]}{self.seq[i + 1]}-{self.invader[i]}{self.invader[i + 1]}-{energy}"
             )
 
-
         return self.alterations_energy
 
     def energy_nn(self, params, mm_energy):
-        G_init, G_bp, G_p, G_s, G_mm,G_nick, *_ = params
+        G_init, G_bp, G_p, G_s, G_mm, G_nick, *_ = params
         self.alterations_energy, self.N, self.state = self.sequence_analyser(params, mm_energy)
-        self.alterations_energy =self.get_nn_energy(params, mm_energy)
+        self.alterations_energy = self.get_nn_energy(params, mm_energy)
         G = self.N * [0]
 
         if self.toehold == 0:  # zero-toehold case
@@ -464,4 +471,5 @@ class IEL:
 
 
 Params = namedtuple('Params', ['G_init', 'G_bp', 'G_p', 'G_s', 'k_uni', 'k_bi'])
+#params_srinivas = Params(9.95, -1.7, 1.2, 2.6, 2.0,7.5e7, 3e6) original
 RT = 0.59
