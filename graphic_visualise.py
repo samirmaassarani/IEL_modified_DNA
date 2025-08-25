@@ -1,15 +1,11 @@
 from IEL import *
 import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 
 class Visualizer:
     def __init__(self,params,mm):
         self.params=params
         self.mm = mm
-
-
-
 
     def iel_plot(self):
         sequence = 'TATAATTTAAGGTGAGATGATAATAGTGTAGAATAAGTGG'
@@ -443,8 +439,8 @@ class Visualizer:
 
         landscape_ref = IEL(sequence, inc_single, invader,
                         toehold=6, Sequence_length=len(sequence), concentration=1)
-        mftp_single = landscape_ref.time_mftp_dissociation(self.params, self.mm)
-        rate_single_unlogged = 1 / mftp_single
+        rate_single_unlogged = landscape_ref.rate(self.params, self.mm)
+
         rate_single = jnp.log10(rate_single_unlogged)
 
         keff_nick=[]
@@ -501,9 +497,9 @@ class Visualizer:
         plt.tight_layout()
         plt.show()
 
-    def heat_map_single_mm(self):
+    def single_mm_plot(self):
         sequence = 'TATAATTTAAGGTGAGATGATAATAGTGTAGAATAAGTGG'
-        invader_comp = "ATATTAAATTCCACTCTACTATTATCACATCTTATTCACC"
+        invader = "ATATTAAATTCCACTCTACTATTATCACATCTTATTCACC"
         double_incumbent = 'AATTCCACTCTACTATTAT+CACATCTTATTCACC'
 
         single_data_set = [
@@ -518,40 +514,30 @@ class Visualizer:
             "ATATTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # S(9)
         ]
 
-        "Complementary invader"
-        landscape_comp = IEL(sequence, double_incumbent, invader_comp,
-                        toehold=6, Sequence_length=len(sequence), concentration=1)
-        perfect_rate = landscape_comp.rate(self.params, self.mm)
-        print(f'complementary strand rate |{perfect_rate} | log10{jnp.log10(perfect_rate)}')
+        "perfect rate"
+        landscape_perfect = IEL(sequence, double_incumbent, invader,
+                                toehold=6, Sequence_length=len(invader), concentration=1)
+        perfect_rate = landscape_perfect.rate(self.params, self.mm)
 
-
-        'Single mismatch in the invader'
-        single_mm_rates=[]
+        "rates for mismatches "
+        mm_rates = []
         for i in range(len(single_data_set)):
-            landscape_single_mm= IEL(sequence, double_incumbent, single_data_set[i],
-                                 toehold=6, Sequence_length=len(sequence), concentration=1)
-            single_mm_rates.append(landscape_single_mm.rate(self.params,self.mm))
+            landscape_mm = IEL(sequence, double_incumbent, single_data_set[i],
+                               toehold=6, Sequence_length=len(invader), concentration=1)
+            mm_rate = landscape_mm.rate(self.params, self.mm)
+            mm_rates.append(mm_rate)
 
-        single_mm_rates=jnp.array(single_mm_rates)
-        print(f'rates fro single mismatch:\n{single_mm_rates}')
-        speed_dif=single_mm_rates-perfect_rate
-        print(f'speed_dif {abs(speed_dif)}')
+        rate_dif = jnp.array([-mm_rate + perfect_rate for mm_rate in mm_rates])
 
-
-        relative_speed = jnp.log10(single_mm_rates) / jnp.log10(perfect_rate)
-        print(f'relative speed {relative_speed}')
-
-        percentage =  (1-relative_speed) * 100
-        print(f'percentage {percentage}')
-
-
-        cmap = "Blues"
-        norm = plt.Normalize(vmin=single_mm_rates.min(), vmax=single_mm_rates.max())
+        cmap = "Blues"  # Red-Blue diverging colormap
+        # Center the colormap at 0
+        vmax = max(abs(rate_dif.min()), abs(rate_dif.max()))
+        norm = plt.Normalize(vmin=-vmax, vmax=vmax)
 
         fig, ax = plt.subplots(figsize=(8, 6))
 
-        # Plot diagonal squares colored by relative speed
-        for i, rate in enumerate(single_mm_rates):
+        # Plot diagonal squares colored by rate differences
+        for i, rate in enumerate(rate_dif):
             ax.scatter(i, i, s=3200,  # big square marker
                        c=[rate], cmap=cmap, norm=norm, marker='s', edgecolors='black')
 
@@ -559,16 +545,18 @@ class Visualizer:
             if i == 0:
                 text_color = 'white'
             else:
-                text_color = 'white' if rate < 0.7 else 'black'  # Adjust threshold if needed
+                # Use white text for extreme values, black for middle values
+                normalized_rate = abs(rate) / vmax
+                text_color = 'white' if normalized_rate > 0.5 else 'black'
 
-            ax.text(i, i, f"{single_mm_rates[i]:.2e}", ha='center', va='center', color=text_color, fontsize=10)
+            ax.text(i, i, f"{rate:.2e}", ha='center', va='center', color=text_color, fontsize=10)
 
-        ax.set_xlim(-1, len(single_mm_rates))
-        ax.set_ylim(-1, len(single_mm_rates))
-        ax.set_xticks(range(len(single_mm_rates)))
-        ax.set_yticks(range(len(single_mm_rates)))
-        ax.set_xticklabels([f"Pos {i + 1}" for i in range(len(single_mm_rates))], rotation=45, fontsize=10)
-        ax.set_yticklabels([f"Pos {i + 1}" for i in range(len(single_mm_rates))], fontsize=10)
+        ax.set_xlim(-1, len(rate_dif))
+        ax.set_ylim(-1, len(rate_dif))
+        ax.set_xticks(range(len(rate_dif)))
+        ax.set_yticks(range(len(rate_dif)))
+        ax.set_xticklabels([f"Pos {i + 1}" for i in range(len(rate_dif))], rotation=45, fontsize=10)
+        ax.set_yticklabels([f"Pos {i + 1}" for i in range(len(rate_dif))], fontsize=10)
         ax.invert_yaxis()  # position 1 at top-left
 
         # Remove grid and spines for a cleaner look
@@ -576,100 +564,102 @@ class Visualizer:
         for spine in ax.spines.values():
             spine.set_visible(False)
 
-        ax.set_title("Single Mismatch Rates\n in Double Incumbent System", fontsize=14)
+        ax.set_title("Single Mismatch Rate Differences\n in Double Incumbent System", fontsize=14)
 
         # Create colorbar with min, mid, and max values displayed
-        sm = plt.cm.ScalarMappable(cmap="Blues", norm=norm)
-        sm.set_array(single_mm_rates)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array(rate_dif)
         cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Relative Keff Rates (vs Complementary)', fontsize=12)
+        cbar.set_label('Rate Difference (vs Complementary)', fontsize=12)
 
         # Calculate min, mid, and max values
-        min_val = single_mm_rates.min()
-        max_val = single_mm_rates.max()
-        mid_val = (min_val + max_val) / 2  # Simple midpoint
+        min_val = rate_dif.min()
+        max_val = rate_dif.max()
+        mid_val = 0.0  # Center at zero
 
         # Set ticks at min, mid, and max
         cbar.set_ticks([min_val, mid_val, max_val])
         # Format them in scientific notation (adjust decimal places as needed)
         cbar.set_ticklabels([f"{min_val:.1e}", f"{mid_val:.1e}", f"{max_val:.1e}"])
 
-        # Optional: Keep the reference line
-        cbar.ax.axhline(1.0, color='black', linestyle='--')  # Mark perfect match rate
+        # Reference line at 0.0 (no difference from perfect rate)
+        cbar.ax.axhline(0.0, color='black', linestyle='--')  # Mark no difference
 
         plt.tight_layout()
         plt.show()
 
-    def heat_map_double_mm(self):
+    def double_mm_plot(self):
         sequence = 'TATAATTTAAGGTGAGATGATAATAGTGTAGAATAAGTGG'
         invader = "ATATTAAATTCCACTCTACTATTATCACATCTTATTCACC"
         double_incumbent = 'AATTCCACTCTACTATTAT+CACATCTTATTCACC'
-        landscape = IEL(sequence, double_incumbent, invader,
-                           toehold=6, Sequence_length=len(sequence), concentration=1)
 
         double_data_set = [
-                        "CCATTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,2)
-                        "CTCTTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,3)
-                        "CTACTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,4)
-                        "CTATCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,5)
-                        "CTATTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,6)
-                        "CTATTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,7)
-                        "CTATTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,8)
-                        "CTATTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,9)
-                        "CTATTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(1,10)
-                        "ACCTTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,3)
-                        "ACACTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,4)
-                        "ACATCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,5)
-                        "ACATTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,6)
-                        "ACATTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,7)
-                        "ACATTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,8)
-                        "ACATTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,9)
-                        "ACATTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(2,10)
-                        "ATCCTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,4)
-                        "ATCTCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,5)
-                        "ATCTTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,6)
-                        "ATCTTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,7)
-                        "ATCTTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,8)
-                        "ATCTTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,9)
-                        "ATCTTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(3,10)
-                        "ATACCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,5)
-                        "ATACTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,6)
-                        "ATACTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,7)
-                        "ATACTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,8)
-                        "ATACTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,9)
-                        "ATACTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(4,10)
-                        "ATATCCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,6)
-                        "ATATCACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,7)
-                        "ATATCAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,8)
-                        "ATATCAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,9)
-                        "ATATCAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(5,10)
-                        "ATATTCCATTCCACTCTACTATTATCACATCTTATTCACC",  # D(6,7)
-                        "ATATTCACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(6,8)
-                        "ATATTCAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(6,9)
-                        "ATATTCAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(6,10)
-                        "ATATTACCTTCCACTCTACTATTATCACATCTTATTCACC",  # D(7,8)
-                        "ATATTACACTCCACTCTACTATTATCACATCTTATTCACC",  # D(7,9)
-                        "ATATTACATCCCACTCTACTATTATCACATCTTATTCACC",  # D(7,10)
-                        "ATATTAACCTCCACTCTACTATTATCACATCTTATTCACC",  # D(8,9)
-                        "ATATTAACTCCCACTCTACTATTATCACATCTTATTCACC",  # D(8,10)
-                        "ATATTAAACCCCACTCTACTATTATCACATCTTATTCACC"  # D(9,10)
+            "CCATTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,2)
+            "CTCTTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,3)
+            "CTACTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,4)
+            "CTATCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,5)
+            "CTATTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,6)
+            "CTATTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,7)
+            "CTATTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,8)
+            "CTATTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(1,9)
+            "CTATTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(1,10)
+            "ACCTTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,3)
+            "ACACTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,4)
+            "ACATCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,5)
+            "ACATTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,6)
+            "ACATTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,7)
+            "ACATTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,8)
+            "ACATTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(2,9)
+            "ACATTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(2,10)
+            "ATCCTAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,4)
+            "ATCTCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,5)
+            "ATCTTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,6)
+            "ATCTTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,7)
+            "ATCTTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,8)
+            "ATCTTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(3,9)
+            "ATCTTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(3,10)
+            "ATACCAAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,5)
+            "ATACTCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,6)
+            "ATACTACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,7)
+            "ATACTAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,8)
+            "ATACTAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(4,9)
+            "ATACTAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(4,10)
+            "ATATCCAATTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,6)
+            "ATATCACATTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,7)
+            "ATATCAACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,8)
+            "ATATCAAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(5,9)
+            "ATATCAAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(5,10)
+            "ATATTCCATTCCACTCTACTATTATCACATCTTATTCACC",  # D(6,7)
+            "ATATTCACTTCCACTCTACTATTATCACATCTTATTCACC",  # D(6,8)
+            "ATATTCAACTCCACTCTACTATTATCACATCTTATTCACC",  # D(6,9)
+            "ATATTCAATCCCACTCTACTATTATCACATCTTATTCACC",  # D(6,10)
+            "ATATTACCTTCCACTCTACTATTATCACATCTTATTCACC",  # D(7,8)
+            "ATATTACACTCCACTCTACTATTATCACATCTTATTCACC",  # D(7,9)
+            "ATATTACATCCCACTCTACTATTATCACATCTTATTCACC",  # D(7,10)
+            "ATATTAACCTCCACTCTACTATTATCACATCTTATTCACC",  # D(8,9)
+            "ATATTAACTCCCACTCTACTATTATCACATCTTATTCACC",  # D(8,10)
+            "ATATTAAACCCCACTCTACTATTATCACATCTTATTCACC"  # D(9,10)
         ]
 
-        perfect_rate = landscape.rate(self.params, self.mm)
-        double_inc_mms = jnp.array(landscape.rate(self.params, self.mm))
-        print(f'perfect rate for double inc | {perfect_rate}')
-        print(f'double mismatches in double inc rate\n{double_inc_mms}')
+        "perfect rate"
+        landscape_perfect = IEL(sequence, double_incumbent, invader,
+                                toehold=6, Sequence_length=len(invader), concentration=1)
+        perfect_rate = landscape_perfect.rate(self.params, self.mm)
 
-        ratio= double_inc_mms/perfect_rate
-        percent=ratio*100
-        percent_change=percent-100
+        "rates for mismatches "
+        mm_rates = []
+        for i in range(len(double_data_set)):
+            landscape_mm = IEL(sequence, double_incumbent, double_data_set[i],
+                               toehold=6, Sequence_length=len(invader), concentration=1)
+            mm_rate = landscape_mm.rate(self.params, self.mm)
+            mm_rates.append(mm_rate)
 
-        double_inc_mms = np.array(double_inc_mms)
+        rate_dif = jnp.array([-mm_rate + perfect_rate for mm_rate in mm_rates])
 
-
-        def create_heatmap_improved(data, title, cbar_label, cmap="viridis", fmt=".1e", is_percent=False, vmin=None,
-                                    vmax=None):
-            """Enhanced helper function to create pyramid heatmaps with improved color schemes"""
+        def create_pyramid_heatmap(data, title, cbar_label, cmap="Blues", fmt=".1e"):
+            """Create pyramid heatmap for double mismatch data"""
+            import seaborn as sns
+            import numpy as np
 
             # Build pyramid rows
             pyramid_rows = []
@@ -684,41 +674,28 @@ class Visualizer:
                 for row in pyramid_rows
             ])
 
-            plt.figure(figsize=(8, 6))
+            plt.figure(figsize=(10, 8))
 
-            # Custom annotation formatting
-            if is_percent:
-                annot = np.array([f"{x:.1f}%" if not np.isnan(x) else "" for x in heatmap_data.flatten()]).reshape(
-                    heatmap_data.shape)
-            else:
-                annot = None
-
-            center = None
             ax = sns.heatmap(
                 heatmap_data,
-                annot=annot if is_percent else True,
-                fmt=fmt if not is_percent else "",
+                annot=True,
+                fmt=fmt,
                 cmap=cmap,
-                center=center,
-                vmin=vmin,
-                vmax=vmax,
                 mask=np.isnan(heatmap_data),
                 cbar_kws={'label': cbar_label},
-                linewidths=0,  # Thin borders
-                linecolor='black',  # Black borders as requested
-                annot_kws={'size': 9}  # Adjust text size
+                linewidths=0.5,
+                linecolor='black',
+                annot_kws={'size': 8}
             )
 
             # Enhanced colorbar formatting
-            if not is_percent:
-                cbar = ax.collections[0].colorbar
-                if fmt.endswith('e'):
-                    # More ticks for better readability
-                    ticks = np.linspace(np.nanmin(heatmap_data), np.nanmax(heatmap_data), 5)
-                    cbar.set_ticks(ticks)
-                    cbar.set_ticklabels([f"{x:.1e}" for x in ticks])
+            cbar = ax.collections[0].colorbar
+            if fmt.endswith('e'):
+                ticks = np.linspace(np.nanmin(heatmap_data), np.nanmax(heatmap_data), 5)
+                cbar.set_ticks(ticks)
+                cbar.set_ticklabels([f"{x:.1e}" for x in ticks])
 
-            # Improved axis formatting
+            # Axis formatting
             ax.set_xticks(np.arange(max_len) + 0.5)
             ax.set_xticklabels([str(j) for j in range(2, 11)], rotation=0)
             ax.set_yticks(np.arange(max_len) + 0.5)
@@ -730,26 +707,17 @@ class Visualizer:
             plt.tight_layout()
             plt.show()
 
-        # Usage examples with improved color schemes:
-
-        # For rate data with blue colormap and thin black borders
-        create_heatmap_improved(
-            double_inc_mms,
+        # Create pyramid heatmap for rates
+        create_pyramid_heatmap(
+            mm_rates,
             "Double Mismatches Keff Rates in Double Incumbent System",
             "Rate (M⁻¹S⁻¹)",
-            cmap="Blues",  # Clean blue gradient
+            cmap="Blues",
             fmt=".1e"
         )
 
-        # For percentage change - uniform with rates (higher values = darker)
-        create_heatmap_improved(
-            percent_change,
-            "Percentage Change in Rate",
-            "Change (%)",
-            cmap="Blues",  # Blue (negative) to white (zero) to red (positive)
-            fmt=".1f",
-            is_percent=True
-        )
+
+
 
     def nn_iel(self):
         sequence = 'TATAATTTAAGGTGAGATGATAATAGTGTAGAATAAGTGG'
@@ -763,7 +731,7 @@ class Visualizer:
 
         dG=landscape_comp.energy_nn(self.params,self.mm)
         fig, ax = plt.subplots(figsize=(7, 5))
-        ax.set_title("Energy landscape of single incumbent")
+        ax.set_title("Energy landscape including NN")
         ax.set_xlabel("Strand Displacement Steps")
         ax.set_ylabel("Free Energy (Kcal/mol)")
         adjusted_x = landscape_comp.state - landscape_comp.toehold
