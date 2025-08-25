@@ -26,8 +26,8 @@ class IEL:
         self.inc_2=""
         self.nick_position=0
 
-
-
+    # TODO: fix the Gbp misconception (delta Gbp is not as Gbp)
+    # TODO: further improve the Nearest Neighbour model as it was done at last minute
 
     def sequence_analyser(self, params, mm_energy):
         G_init, G_bp, G_p, G_s, *_ = params
